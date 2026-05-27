@@ -137,6 +137,43 @@ bool Agent::init()
     if (s.temp > 0.0f)
         llama_sampler_chain_add(sampler_, llama_sampler_init_temp(s.temp));
 
+    // --- Grammar-constrained decoding per tool call JSON ---
+    // Usa una lazy grammar: si attiva quando il modello emette {"tool",
+    // e forza la sintassi JSON valida per il resto del tool call.
+    // Quando non attiva, il modello genera testo libero senza vincoli.
+    {
+        const char * grammar_str =
+            "root ::= \"{\" ws \"\\\"tool\\\"\" ws \":\" ws string ws \",\" ws \"\\\"args\\\"\" ws \":\" ws \"{\" ws args ws \"}\" ws \"}\""
+            "\n\n"
+            "string ::="
+            "\n  \"\\\"\" ("
+            "\n    [^\"\\\\\\x7F\\x00-\\x1F] |"
+            "\n    \"\\\\\" ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])"
+            "\n  )* \"\\\"\" ws"
+            "\n\n"
+            "args ::= arg (\",\" ws arg)*"
+            "\narg ::= \"\\\"\" arg-name \"\\\"\" ws \":\" ws value"
+            "\narg-name ::= \"command\" | \"path\" | \"content\" | \"pattern\" | \"url\" | \"format\" | \"timeout\" | \"tool\" | \"function\" | \"arguments\" | \"parameters\" | \"name\" | \"description\""
+            "\n\n"
+            "value ::= string | number | \"true\" | \"false\" | \"null\""
+            "\nnumber ::= \"-\"? ([0-9] | [1-9] [0-9]{0,15}) (\".\" [0-9]+)?"
+            "\n\n"
+            "ws ::= | \" \" | \"\\n\" [ \\t]{0,20}";
+
+        const char * trigger = "\\{\\\"tool";
+        const char * trigger_patterns[] = { trigger };
+        const llama_vocab * vocab = llama_model_get_vocab(model_);
+
+        auto * grammar_sampler = llama_sampler_init_grammar_lazy_patterns(
+            vocab, grammar_str, "root",
+            trigger_patterns, 1,
+            nullptr, 0);
+
+        if (grammar_sampler) {
+            llama_sampler_chain_add(sampler_, grammar_sampler);
+        }
+    }
+
     llama_sampler_chain_add(sampler_, llama_sampler_init_dist(s.seed));
 
     // Batch per decoding

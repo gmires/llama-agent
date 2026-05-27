@@ -416,16 +416,53 @@ static std::string unescape_json(const std::string & s)
 }
 
 /**
+ * Avanza l'indice i fino a trovare un carattere c NON dentro una stringa JSON.
+ * Salta correttamente le stringhe JSON (con escape \"), non conta {} dentro le stringhe.
+ */
+static size_t skip_json_string(const std::string & str, size_t i)
+{
+    if (i >= str.size() || str[i] != '"') return i;
+    i++; // salta la " di apertura
+    while (i < str.size()) {
+        if (str[i] == '\\' && i + 1 < str.size()) {
+            i += 2; // salta carattere escaped
+        } else if (str[i] == '"') {
+            return i + 1; // fine stringa
+        } else {
+            i++;
+        }
+    }
+    return i;
+}
+
+/**
+ * Trova il carattere c a partire da pos, saltando le stringhe JSON.
+ * Restituisce npos se non trovato.
+ */
+static size_t find_char_outside_string(const std::string & str, char c, size_t pos)
+{
+    while (pos < str.size()) {
+        if (str[pos] == '"') {
+            pos = skip_json_string(str, pos);
+        } else if (str[pos] == c) {
+            return pos;
+        } else {
+            pos++;
+        }
+    }
+    return std::string::npos;
+}
+
+/**
  * Estrae il valore di una chiave JSON da una stringa strutturata.
- * Gestisce valori con virgolette escaped (\\\") e multi-riga.
- * Cerchiamo "key": "value" oppure "key": value (senza virgolette).
+ * Gestisce correttamente stringhe JSON nidificate (con \" interni).
  */
 static std::string extract_json_value(const std::string & str, size_t key_pos)
 {
     if (key_pos == std::string::npos) return "";
 
     // Cerca i due punti dopo la chiave
-    size_t colon = str.find(':', key_pos);
+    size_t colon = find_char_outside_string(str, ':', key_pos);
     if (colon == std::string::npos) return "";
 
     // Salta spazi
@@ -437,22 +474,23 @@ static std::string extract_json_value(const std::string & str, size_t key_pos)
 
     // Valore con virgolette
     if (str[val_start] == '"') {
+        // Estrai il contenuto della stringa JSON rispettando gli escape
+        size_t content_start = val_start + 1;
+        size_t i = content_start;
         std::string result;
-        bool escaped = false;
-        for (size_t i = val_start + 1; i < str.size(); i++) {
-            if (escaped) {
+        while (i < str.size()) {
+            if (str[i] == '\\' && i + 1 < str.size()) {
                 result += str[i];
-                escaped = false;
-            } else if (str[i] == '\\') {
-                result += str[i];
-                escaped = true;
+                result += str[i + 1];
+                i += 2;
             } else if (str[i] == '"') {
                 return unescape_json(result);
             } else {
                 result += str[i];
+                i++;
             }
         }
-        return unescape_json(result); // fallback
+        return unescape_json(result);
     }
 
     // Valore senza virgolette (numeri, booleani, null)
@@ -508,16 +546,37 @@ bool ToolRegistry::parse_tool_call(
     // Estrai coppie chiave-valore dall'oggetto args
     std::string args_obj = json_str.substr(brace_start + 1, brace_end - brace_start - 1);
 
-    // Trova tutte le chiavi con valori: "key": "value" o "key": value
+    // Scansiona args_obj linearmente, trovando "key": fuori dalle stringhe JSON.
+    // Questo evita falsi match quando il contenuto (es. JS) contiene "key": patterns.
     {
-        std::regex kv_regex("\"([^\"]+)\"\\s*:");
-        std::sregex_iterator it(args_obj.begin(), args_obj.end(), kv_regex);
-        for (; it != std::sregex_iterator(); ++it) {
-            std::string key = (*it)[1].str();
-            if (key == "tool" || key == "function" || key == "tool_call") continue;
-            std::string value = extract_json_value(args_obj, it->position());
-            if (!value.empty()) {
-                out_args[key] = value;
+        size_t i = 0;
+        while (i < args_obj.size()) {
+            // Salta le stringhe JSON
+            if (args_obj[i] == '"') {
+                size_t str_end = skip_json_string(args_obj, i);
+                // Verifica se questa stringa è una chiave (seguita da ':')
+                size_t after_str = str_end;
+                while (after_str < args_obj.size() &&
+                       (args_obj[after_str] == ' ' || args_obj[after_str] == '\t' ||
+                        args_obj[after_str] == '\n' || args_obj[after_str] == '\r'))
+                    after_str++;
+                if (after_str < args_obj.size() && args_obj[after_str] == ':') {
+                    // Estrai il nome della chiave (senza virgolette)
+                    std::string key = unescape_json(args_obj.substr(i + 1, str_end - i - 2));
+                    if (key != "tool" && key != "function" && key != "tool_call") {
+                        std::string value = extract_json_value(args_obj, i);
+                        if (!value.empty()) {
+                            out_args[key] = value;
+                        }
+                    }
+                    i = after_str + 1; // salta ':'
+                } else {
+                    i = str_end; // non era una chiave, continua
+                }
+            } else if (args_obj[i] == '{' || args_obj[i] == '}') {
+                i++; // oggetti annidati, saltiamo
+            } else {
+                i++;
             }
         }
     }
@@ -537,17 +596,24 @@ std::string ToolRegistry::extract_json_block(const std::string & text) const
     }
 
     // Seconda prova: {...} (oggetto JSON diretto)
+    // Usa skip_json_string per non contare {} dentro stringhe JSON
     size_t brace_start = text.find('{');
     if (brace_start != std::string::npos) {
-        // Trova la chiusura corrispondente
         int depth = 0;
-        for (size_t i = brace_start; i < text.size(); i++) {
-            if (text[i] == '{') depth++;
-            else if (text[i] == '}') {
+        for (size_t i = brace_start; i < text.size();) {
+            if (text[i] == '"') {
+                i = skip_json_string(text, i);
+            } else if (text[i] == '{') {
+                depth++;
+                i++;
+            } else if (text[i] == '}') {
                 depth--;
                 if (depth == 0) {
                     return text.substr(brace_start, i - brace_start + 1);
                 }
+                i++;
+            } else {
+                i++;
             }
         }
     }

@@ -103,6 +103,24 @@ emettendo un blocco JSON nel formato:
 {"tool": "nome", "args": {"param1": "valore"}}
 ```
 
+### Robustezza parsing JSON
+
+Il parser JSON dei tool call è stato progettato per gestire contenuti complessi nei parametri:
+
+- **`{}` nelle stringhe**: contenuti come `{ x: 10, y: 10 }` in JavaScript non confondono il parser
+- **`"` nelle stringhe**: virgolette nei contenuti non troncano il valore
+- **Pattern `chiave: valore`**: falsi key-value nel contenuto non generano falsi match
+
+Il parser traccia correttamente lo stato stringa JSON usando `skip_json_string()`, evitando
+falsi positivi nel riconoscimento delle chiavi.
+
+### Grammar-constrained decoding
+
+llama-agent usa **lazy grammar** (`llama_sampler_init_grammar_lazy_patterns`) per forzare
+sintassi JSON valida quando il modello inizia un tool call. La grammatica GBNF si attiva
+automaticamente quando il modello emette `{"tool` e vincola la generazione fino alla
+chiusura del JSON. Il resto del tempo il modello genera testo libero senza vincoli.
+
 ### Tool disponibili
 
 | Tool | Descrizione |
@@ -129,6 +147,13 @@ emettendo un blocco JSON nel formato:
   [Il modello usa read per leggere, poi write per scrivere]
   Fatto, ho aggiunto il commento.
 ```
+
+### Limiti noti
+
+Il modello può occasionalmente generare JSON malformato (es. `{"ool" "rite" ...}` con primo
+carattere mancante). Questo è un limite del modello (tipico di modelli piccoli che faticano
+a formattare strutture annidate con stringhe lunghe). La lazy grammar aiuta quando il modello
+inizia correttamente il tool call, ma non può correggere errori nel priming della generazione.
 
 ## Cache persistente
 

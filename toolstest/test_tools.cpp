@@ -78,6 +78,54 @@ static void test_parse_tool_call()
     CHECK(name == "glob", "glob name");
     CHECK(args["pattern"] == "*.cpp", "glob pattern");
 
+    // --- Bug 1: JS content con {} (es. { x: 10, y: 10 }) ---
+    name.clear(); args.clear();
+    CHECK(reg.parse_tool_call(
+        "{\"tool\": \"write\", \"args\": {\"path\": \"script.js\", \"content\": \"let snake = [{ x: 10, y: 10 }];\"}}",
+        name, args),
+        "js with braces");
+    CHECK(name == "write", "js braces tool name");
+    CHECK(args["path"] == "script.js", "js braces path");
+    CHECK(args["content"] == "let snake = [{ x: 10, y: 10 }];", "js braces content");
+    CHECK(args.size() == 2, "js braces exactly 2 args");
+
+    // --- Bug 2: JS/HTML content con " (es. getElementById("canvas")) ---    
+    name.clear(); args.clear();
+    CHECK(reg.parse_tool_call(
+        "{\"tool\": \"write\", \"args\": {\"path\": \"app.js\", \"content\": \"document.getElementById(\\\"canvas\\\");\"}}",
+        name, args),
+        "js with escaped quotes");
+    CHECK(args["content"] == "document.getElementById(\"canvas\");", "js quotes unescaped");
+
+    // --- Bug 3: Content con "key": value patterns (falsi match regex) ---
+    name.clear(); args.clear();
+    CHECK(reg.parse_tool_call(
+        "{\"tool\": \"write\", \"args\": {\"path\": \"data.json\", \"content\": \"{\\\"name\\\": \\\"test\\\"}\"}}",
+        name, args),
+        "json content with inner quotes/colons");
+    CHECK(args["content"] == "{\"name\": \"test\"}", "json content preserved");
+    CHECK(args["path"] == "data.json", "path still correct after inner json");
+    CHECK(args.size() == 2, "exactly 2 args with inner json");
+
+    // --- Scenario realistico: write con JS snake game (full content) ---
+    name.clear(); args.clear();
+    CHECK(reg.parse_tool_call(
+        "```json\n{\"tool\": \"write\", \"args\": {\"path\": \"snake.js\", \"content\": \"const canvas = document.getElementById('gameCanvas');\\nconst ctx = canvas.getContext('2d');\\nlet snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }];\"}}\n```",
+        name, args),
+        "realistic js snake write call");
+    CHECK(name == "write", "snake js tool");
+    CHECK(args["path"] == "snake.js", "snake js path");
+    CHECK(args["content"].find("const canvas") != std::string::npos, "snake has const canvas");
+    CHECK(args["content"].find("{ x: 10, y: 10 }") != std::string::npos, "snake has object literals");
+
+    // --- Malformed: JSON senza colonne (come output dal modello) ---
+    // Non deve parseare come tool call valida
+    name.clear(); args.clear();
+    CHECK(!reg.parse_tool_call(
+        "{\"ool\" \"rite\" \"rgs\" {\"ath\" \"cript.js\"}}",
+        name, args),
+        "malformed json without colons is rejected");
+
     std::cout << "  " << passed << "/" << tests << " passed\n";
 }
 

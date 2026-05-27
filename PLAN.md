@@ -48,6 +48,12 @@
 - [x] Session permanent allow
 - [x] Default: read/glob/grep=ALLOW, write=ALLOW, bash=ASK
 
+### JSON Parsing & Grammar
+- [x] Parsing JSON string-aware (skip_json_string): `{}` e `"` dentro contenuti non confondono il parser
+- [x] Scansione lineare chiavi fuori dalle stringhe: falsi key-value nel content non generano falsi match
+- [x] Regex trigger `{"tool` per attivazione lazy grammar
+- [x] GBNF grammar per tool call JSON: root → tool-call → args → string → value
+
 ### Build
 - [x] `build.sh` con 10 profili: debug, release, cuda, vulkan, hip, metal, sycl, blas, openmp, all
 - [x] `CMAKE_FLAGS_EXTRA` env var per flag extra
@@ -64,7 +70,7 @@
 |---------|----------|-------------|----------|
 | Chat TUI | ✅ | ✅ FTXUI + SimpleUI | - |
 | KVCache persistente | ❌ | ✅ Token-based | - |
-| Tool calling | ✅ 13 tools | ✅ 6 tools | - |
+| Tool calling | ✅ 13 tools | ✅ 6 tools + lazy grammar GBNF | - |
 | Systema permessi | ✅ Granulare | ✅ Gerarchico 3-stati | - |
 | Session management (--continue, --session, --fork) | ✅ | ❌ | **HIGH** |
 | Multi-provider (Anthropic, OpenAI, Google, Groq, AWS, GCP, Azure, DeepSeek, xAI, HuggingFace, Together, Ollama, LM Studio, etc.) | ✅ | ❌ (solo llama.cpp) | **HIGH** |
@@ -89,6 +95,8 @@
 ### P0 — Must Have (prima release)
 
 - [ ] **Fix PgUp/PgDn scrolling** — `scroll_y` cambia ma viewport non si muove. Probabile soluzione: `Container::Vertical` con focusability sugli elementi interni, invece di raw yframe
+- [x] **JSON parsing robusto** — 3 bug fixati in `extract_json_block`, `extract_json_value`, `parse_tool_call` (string-aware parsing con `skip_json_string`)
+- [x] **Grammar-constrained decoding** — `llama_sampler_init_grammar_lazy_patterns` per tool call JSON con trigger `{"tool`
 - [ ] **Session management system** — salva/carica conversazione completa:
   - `--session <name>` per sessioni multiple (invece di singolo .cache/)
   - `--continue` per riprendere ultima sessione
