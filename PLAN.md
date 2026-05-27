@@ -20,11 +20,13 @@
 - [x] Flag: `--cache-mode fast|token`, `--no-cache`
 
 ### UI
-- [x] FTXUI TUI con area contenuto scrollabile + input + footer
-- [x] Scroll PgUp/PgDn/Home/End con `frame` + `focusPositionRelative`
-- [x] Colori per ruolo: utente (verde), assistant (bianco), tool call (blu), code block (sfondo grigio, testo cyan), heading (giallo)
-- [x] Thinking separato con header `── Thinking ──`
-- [x] Footer: token, T/s, contesto (n_past/n_ctx), cache size
+- [x] FTXUI TUI con messaggi strutturati (6 tipi: USER/ASSISTANT/THINKING/TOOL_CALL/TOOL_RESULT/SYSTEM)
+- [x] Tool call a blocchi: `▸ Tool: name(args)` blu bold, `│ risultato` blu dim
+- [x] Thinking collassabile con toggle tasto `T` (▼/▶)
+- [x] Scroll PgUp/PgDn/Home/End con `focusPositionRelative`
+- [x] Code block inline (` ``` `) con sfondo grigio e testo cyan
+- [x] Colori per ruolo: utente verde `❯`, assistant bianco, heading giallo, sistema grigio
+- [x] Footer con statistiche + hint tasti
 - [x] Spinner animato durante generazione
 - [x] SimpleUI alternativa (ANSI, --simple-ui)
 - [x] Comandi slash: /help, /clear, /regen, /exit
@@ -132,6 +134,24 @@
   - Link cliccabili
   - Liste indentate con bullet `•`
 
+- [ ] **Compattazione contesto** (context compaction):
+  - **Problema attuale**: quando `n_past_ + nuovi_token > n_ctx - 128`, il contesto viene resettato completamente (`llama_memory_clear`) — si perde tutta la cronologia
+  - **Soglia compattazione**: trigger a ~80% del contesto (`n_past_ > 0.8 * n_ctx`)
+  - **Strategia**:
+    1. Rileva superamento soglia prima di aggiungere nuovi token
+    2. Separa i messaggi in "vecchi" (primi 60%) e "recenti" (ultimi 40%)
+    3. Genera un riassunto dei messaggi vecchi con una chiamata LLM dedicata:
+       ```
+       "Riassumi questa conversazione in 3-5 frasi, preservando informazioni su file modificati e decisioni prese: ..."
+       ```
+    4. Ricostruisci il prompt: system + `<summary>...</summary>` + messaggi recenti
+    5. Rivaluta il nuovo prompt compresso
+  - **Configurabile**: `--compact-threshold 0.8` (frazione del contesto), `--compact-keep-last N` (messaggi recenti da preservare)
+  - **Comando manuale**: `/compact` per forzare la compattazione immediata
+  - **Compattazione automatica**: abilitata di default, disabilitabile con `--no-compact`
+  - **Salvataggio**: i messaggi originali rimangono in `conversation.json`; il summary è solo per la KVCache corrente
+  - **Riferimento**: simile al `/compact` di pi (lossy, history originale preservata nel file JSONL)
+
 ### P2 — Media Priorità (espansione)
 
 - [ ] **Extensions system**:
@@ -171,8 +191,6 @@
   - Autocompletamento file path (`@` + Tab, come pi) con fuzzy search
   - Mouse wheel scroll
   - Syntax highlighting nel code block con shiki/tree-sitter
-  - Temi chiaro/scuro selezionabili
-  - Commutazione thinking level visiva (bordo input colorato)
 
 - [ ] **Steering messages**:
   - Invia messaggi mentre l'agente lavora (durante esecuzione tool)

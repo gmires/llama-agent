@@ -723,6 +723,17 @@ void Agent::handle_tool_call(const std::string & name,
         feedback = "\n  >> " + name + " ERR: " + result.error + "\n";
     }
 
+    // Mostra risultato nella UI come blocco TOOL_RESULT
+    if (ui_) {
+        std::string short_output = result.success
+            ? result.output
+            : result.error;
+        if (short_output.size() > 200)
+            short_output = short_output.substr(0, 200) + "...";
+        ui_->show_tool_execution(name,
+            result.success ? ("OK: " + short_output) : ("ERR: " + short_output));
+    }
+
     // Inietta il risultato nel contesto
     std::vector<llama_token> ft = common_tokenize(ctx_, feedback, true);
     for (size_t i = 0; i < ft.size(); i++) {

@@ -90,9 +90,10 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 |-------|--------|
 | `Enter` | Invia messaggio |
 | `Ctrl+Enter` / `Ctrl+J` | Nuova riga nell'input |
-| `PgUp` / `PgDn` | Scroll cronologia |
-| `Home` / `End` | Vai all'inizio/fine della cronologia |
+| `PgUp` / `PgDn` | Scroll cronologia (30% per volta) |
+| `Home` / `End` | Inizio/fine cronologia |
 | `Su` / `Giù` | Cronologia prompt precedenti |
+| `T` | Comprimi/espandi blocchi Thinking (▼ / ▶)
 
 ---
 
@@ -201,13 +202,16 @@ Default: `read`/`grep`/`glob`/`find` = ALLOW, `write` = ALLOW, `bash` = ASK, `fe
 
 ### FTXUI (default)
 
-Interfaccia moderna con:
-- **Split pane**: area contenuto scrollabile + input multilinea + footer statistiche
-- **Colori per ruolo**: messaggi utente in verde (`> `), assistant in bianco, tool call in blu, heading in giallo
-- **Code block**: blocchi tra ` ``` ` con sfondo grigio e testo cyan
-- **Thinking/Response split**: thinking in giallo con header `── Thinking ──`, response in bianco
+Interfaccia moderna con messaggi strutturati ispirata a pi:
+
+- **Messaggi strutturati**: ogni messaggio ha un tipo (USER, ASSISTANT, THINKING, TOOL_CALL, TOOL_RESULT, SYSTEM) e uno stile visivo distinto
+- **Tool call a blocchi**: `▸ Tool: write (path="...", ...)` in blu bold, risultato `│ OK: 523 bytes` in blu dim
+- **Thinking collassabile**: `▼ Thinking` / `▶ Thinking` con toggle tasto `T`
+- **Code block**: ` ``` ` blocchi con sfondo grigio e testo cyan
+- **Colori per ruolo**: utente in verde bold `❯`, assistant in bianco, heading in giallo, sistema in grigio dim
+- **Input area**: prompt `❯ ` verde, supporto multilinea, hint comandi slash
+- **Footer**: token generati, T/s, contesto (n_past/n_ctx), hint tasti (PgUp/PgDn/Home/End, T=thinking)
 - **Spinner**: `|/-\` animato durante la generazione
-- **Footer**: token generati, T/s, utilizzo contesto (n_past/n_ctx), cache size
 - **Overlay permessi**: finestra modale centrata per conferma tool (y/n/a)
 - **Watchdog**: reset automatico dopo 15 minuti di generazione bloccata
 
