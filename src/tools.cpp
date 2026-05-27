@@ -6,6 +6,10 @@
 #include <sstream>
 #include <algorithm>
 #include <regex>
+#include <filesystem>
+#include <fnmatch.h>
+
+namespace fs = std::filesystem;
 
 /*
  * ============================================================================
@@ -35,10 +39,12 @@ ToolRegistry::ToolRegistry()
     // --- Tool: bash ---
     register_tool({
         "bash",
-        "Esegue un comando shell e restituisce l'output. "
-        "Utile per eseguire comandi, script, compilazioni, ecc.",
+        "Esegue un comando shell e restituisce stdout+stderr. "
+        "Output limitato a 64KB. Usa 'timeout' per specificare secondi (default 30). "
+        "Utile per eseguire comandi, script, compilazioni, git, ls, find, ecc.",
         {
-            {"command", "string", "Il comando shell da eseguire", true}
+            {"command", "string", "Il comando shell da eseguire", true},
+            {"timeout", "number", "Timeout in secondi (default: 30)", false}
         },
         [](const std::map<std::string, std::string> & args) -> ToolResult {
             const auto it = args.find("command");
@@ -46,30 +52,54 @@ ToolRegistry::ToolRegistry()
                 return {false, "", "Parametro 'command' mancante"};
             }
 
-            // Esegue il comando via popen e cattura l'output
-            // NOTA: in produzione usare qualcosa di piu' robusto (subprocess)
-            FILE * pipe = popen(it->second.c_str(), "r");
+            int timeout_sec = 30;
+            auto it_timeout = args.find("timeout");
+            if (it_timeout != args.end()) {
+                try { timeout_sec = std::stoi(it_timeout->second); }
+                catch (...) {}
+            }
+
+            std::string cmd = it->second;
+            cmd += " 2>&1";
+
+            FILE * pipe = popen(cmd.c_str(), "r");
             if (!pipe) {
                 return {false, "", "Impossibile eseguire il comando: " + it->second};
             }
 
             std::string output;
             char buffer[4096];
+            auto start_time = std::chrono::steady_clock::now();
+
             while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
                 output += buffer;
+
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - start_time).count();
+                if (elapsed > timeout_sec) {
+                    pclose(pipe);
+                    if (output.size() < 50000) output += "\n";
+                    output += "[timeout dopo " + std::to_string(timeout_sec) + "s]";
+                    const size_t MAX_OUTPUT = 65536;
+                    if (output.size() > MAX_OUTPUT) {
+                        output.resize(MAX_OUTPUT - 30);
+                        output += "\n... [output troncato]";
+                    }
+                    return {true, output, ""};
+                }
+
+                const size_t MAX_SIZE = 65536;
+                if (output.size() > MAX_SIZE) {
+                    pclose(pipe);
+                    output.resize(MAX_SIZE - 30);
+                    output += "\n... [output troncato]";
+                    return {true, output, ""};
+                }
             }
+
             int exit_code = pclose(pipe);
 
-            // Limita la dimensione dell'output (protezione da output eccessivi)
-            const size_t MAX_OUTPUT = 65536;
-            if (output.size() > MAX_OUTPUT) {
-                output.resize(MAX_OUTPUT);
-                output += "\n... [output troncato a " + std::to_string(MAX_OUTPUT) + " bytes]";
-            }
-
             if (exit_code != 0) {
-                // Non consideriamo errore: il comando potrebbe fallire lecitamente
-                // Aggiungiamo il codice di uscita all'output
                 output += "\n[exit code: " + std::to_string(exit_code) + "]";
             }
 
@@ -225,7 +255,98 @@ ToolRegistry::ToolRegistry()
         }
     });
 
-    // --- Tool: fetch ---
+    // --- Tool: find ---
+    register_tool({
+        "find",
+        "Cerca file e directory ricorsivamente. Restituisce percorsi relativi. "
+        "Supporta: path iniziale, pattern nome (es. *.cpp, test*, *config*), "
+        "tipo (file/directory/any), profondit massima. "
+        "Grep per il contenuto, find per i nomi dei file.",
+        {
+            {"path", "string", "Directory da cui iniziare (default: .)", false},
+            {"pattern", "string", "Pattern per il nome file (es. *.cpp, test*). Usa * per tutti.", true},
+            {"type", "string", "Tipo: file, directory, any (default: any)", false},
+            {"max_depth", "number", "Profondit massima (default: illimitata)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            std::string search_path = ".";
+            auto it_path = args.find("path");
+            if (it_path != args.end()) search_path = it_path->second;
+
+            std::string pattern = "*";
+            auto it_pat = args.find("pattern");
+            if (it_pat != args.end()) pattern = it_pat->second;
+
+            std::string type_filter = "any";
+            auto it_type = args.find("type");
+            if (it_type != args.end()) type_filter = it_type->second;
+
+            int max_depth = -1;
+            auto it_depth = args.find("max_depth");
+            if (it_depth != args.end()) {
+                try { max_depth = std::stoi(it_depth->second); }
+                catch (...) {}
+            }
+
+            if (!fs::exists(search_path) || !fs::is_directory(search_path)) {
+                return {false, "", "Directory non trovata: " + search_path};
+            }
+
+            std::string output;
+            int count = 0;
+            const int MAX_RESULTS = 500;
+            const int MAX_OUTPUT = 32768;
+
+            try {
+                auto iter = fs::recursive_directory_iterator(
+                    search_path,
+                    fs::directory_options::skip_permission_denied);
+                for (; iter != fs::recursive_directory_iterator(); ++iter) {
+                    const auto & entry = *iter;
+                    int depth = iter.depth();
+                    if (max_depth >= 0 && depth > max_depth) {
+                        if (depth >= max_depth) iter.disable_recursion_pending();
+                        continue;
+                    }
+
+                    std::string name = entry.path().filename().string();
+
+                    if (fnmatch(pattern.c_str(), name.c_str(), 0) != 0)
+                        continue;
+
+                    if (type_filter == "file" && !entry.is_regular_file()) continue;
+                    if (type_filter == "directory" && !entry.is_directory()) continue;
+
+                    std::string rel_path = fs::relative(entry.path(), search_path).string();
+                    if (entry.is_directory()) rel_path += "/";
+
+                    output += rel_path + "\n";
+                    count++;
+
+                    if (count >= MAX_RESULTS) {
+                        output += "... [limite " + std::to_string(MAX_RESULTS) +
+                                  " risultati raggiunto]";
+                        break;
+                    }
+
+                    if (output.size() > MAX_OUTPUT) {
+                        output.resize(MAX_OUTPUT - 40);
+                        output += "\n... [output troncato]";
+                        break;
+                    }
+                }
+            } catch (const std::exception & e) {
+                if (count == 0)
+                    return {false, "", "Errore ricerca: " + std::string(e.what())};
+            }
+
+            if (output.empty()) {
+                output = "[nessun file trovato per: " + pattern + "]";
+            }
+
+            return {true, output, ""};
+        }
+    });
     register_tool({
         "fetch",
         "Scarica il contenuto di un URL. "

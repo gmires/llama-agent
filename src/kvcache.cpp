@@ -10,20 +10,7 @@
 
 namespace fs = std::filesystem;
 
-/*
- * ============================================================================
- * KVCacheManager: salva e carica la KVCache su disco.
- *
- * Salva solo i TOKEN su file (non lo stato completo del contesto).
- * Al caricamento, i token vengono restituiti e il chiamante ricostruisce
- * la KVCache valutandoli uno per uno. Questo evita problemi di
- * compatibilità del formato di serializzazione interna di llama.cpp.
- *
- * Formato file: header (magic + version) + count(uint32) + tokens[]
- * ============================================================================
- */
-
-static const uint32_t CACHE_MAGIC   = 0x4C4C4147; // "LLAG"
+static const uint32_t CACHE_MAGIC   = 0x4C4C4147;
 static const uint32_t CACHE_VERSION = 1;
 
 KVCacheManager::KVCacheManager(const std::string & cache_dir)
@@ -42,7 +29,7 @@ bool KVCacheManager::save(llama_context * /*ctx*/, const std::vector<llama_token
 
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        fprintf(stderr, "[KVCache] Errore apertura file: %s\n", path.c_str());
+        fprintf(stderr, "[KVCache] Errore apertura token file: %s\n", path.c_str());
         return false;
     }
 
@@ -53,11 +40,10 @@ bool KVCacheManager::save(llama_context * /*ctx*/, const std::vector<llama_token
     file.write((const char*)tokens.data(), tokens.size() * sizeof(llama_token));
 
     if (!file.good()) {
-        fprintf(stderr, "[KVCache] Errore scrittura file: %s\n", path.c_str());
+        fprintf(stderr, "[KVCache] Errore scrittura token file: %s\n", path.c_str());
         return false;
     }
 
-    fprintf(stderr, "[KVCache] Salvati %zu token -> %s\n", tokens.size(), path.c_str());
     return true;
 }
 
@@ -69,7 +55,6 @@ bool KVCacheManager::load(llama_context * /*ctx*/, std::vector<llama_token> & to
 
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        fprintf(stderr, "[KVCache] Errore apertura file: %s\n", path.c_str());
         return false;
     }
 
@@ -79,7 +64,6 @@ bool KVCacheManager::load(llama_context * /*ctx*/, std::vector<llama_token> & to
     file.read((char*)&count, sizeof(count));
 
     if (magic != CACHE_MAGIC || version != CACHE_VERSION) {
-        fprintf(stderr, "[KVCache] Formato non riconosciuto: magic=%08x ver=%u\n", magic, version);
         return false;
     }
 
@@ -87,13 +71,51 @@ bool KVCacheManager::load(llama_context * /*ctx*/, std::vector<llama_token> & to
     file.read((char*)tokens_out.data(), count * sizeof(llama_token));
 
     if (!file.good()) {
-        fprintf(stderr, "[KVCache] Errore lettura file: %s\n", path.c_str());
         tokens_out.clear();
         return false;
     }
 
     fprintf(stderr, "[KVCache] Caricati %zu token da %s\n", tokens_out.size(), path.c_str());
     return true;
+}
+
+bool KVCacheManager::save_state(llama_context * ctx, const std::vector<llama_token> & tokens)
+{
+    if (!enabled_) return false;
+    if (mode_ != CacheMode::FAST) return false;
+    const std::string path = get_state_path();
+    if (path.empty()) return false;
+
+    bool ok = llama_state_save_file(ctx, path.c_str(), tokens.data(), tokens.size());
+    if (ok) {
+        fprintf(stderr, "[KVCache] Stato salvato (%zu token, %zu bytes) -> %s\n",
+                tokens.size(), llama_state_get_size(ctx), path.c_str());
+    }
+    return ok;
+}
+
+bool KVCacheManager::load_state(llama_context * ctx, std::vector<llama_token> & tokens_out)
+{
+    if (!enabled_) return false;
+    if (mode_ != CacheMode::FAST) return false;
+    const std::string path = get_state_path();
+    if (!fs::exists(path)) return false;
+
+    size_t n_token_capacity = 65536;
+    tokens_out.resize(n_token_capacity);
+    size_t n_token_count = 0;
+
+    bool ok = llama_state_load_file(ctx, path.c_str(), tokens_out.data(), n_token_capacity, &n_token_count);
+    if (ok) {
+        tokens_out.resize(n_token_count);
+        fprintf(stderr, "[KVCache] Stato caricato (%zu token, %zu bytes) <- %s\n",
+                n_token_count, llama_state_get_size(ctx), path.c_str());
+    } else {
+        tokens_out.clear();
+        fprintf(stderr, "[KVCache] Stato non valido, eliminazione: %s\n", path.c_str());
+        fs::remove(path);
+    }
+    return ok;
 }
 
 std::string KVCacheManager::hash_string(const std::string & str)
@@ -114,11 +136,29 @@ void KVCacheManager::set_cache_key(const std::string & key)
 
 void KVCacheManager::clear()
 {
-    const std::string path = get_cache_path();
-    if (!path.empty() && fs::exists(path)) {
-        fs::remove(path);
-        fprintf(stderr, "[KVCache] Cache eliminata: %s\n", path.c_str());
+    // Elimina token file
+    {
+        const std::string path = get_cache_path();
+        if (!path.empty() && fs::exists(path)) {
+            fs::remove(path);
+        }
     }
+    // Elimina prompt file
+    {
+        const std::string path = get_cache_path(true);
+        if (!path.empty() && fs::exists(path)) {
+            fs::remove(path);
+        }
+    }
+    // Elimina state file
+    {
+        const std::string path = get_state_path();
+        if (!path.empty() && fs::exists(path)) {
+            fs::remove(path);
+        }
+    }
+
+    fprintf(stderr, "[KVCache] Cache eliminata\n");
 }
 
 std::string KVCacheManager::get_cache_path(bool prompt_only) const
@@ -130,7 +170,20 @@ std::string KVCacheManager::get_cache_path(bool prompt_only) const
     return (fs::path(cache_dir_) / filename).string();
 }
 
+std::string KVCacheManager::get_state_path() const
+{
+    if (cache_dir_.empty()) return "";
+    const std::string key = cache_key_.empty() ? "default" : cache_key_;
+    const std::string filename = "cache_" + hash_string(key) + "_state.bin";
+    return (fs::path(cache_dir_) / filename).string();
+}
+
 void KVCacheManager::set_enabled(bool enabled)
 {
     enabled_ = enabled;
+}
+
+void KVCacheManager::set_mode(CacheMode mode)
+{
+    mode_ = mode;
 }

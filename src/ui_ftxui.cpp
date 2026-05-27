@@ -69,6 +69,21 @@ struct FTXUI::Impl {
     // Scroll state: 1.0 = fondo (auto), 0.0 = inizio
     float scroll_y = 1.0f;
 
+    void append_to_chat(const std::string & role, const std::string & text) {
+        std::lock_guard<std::mutex> tl(text_mutex);
+        if (role == "user") {
+            chat_log += "> " + text + "\n";
+        } else if (role == "assistant" || role == "model") {
+            chat_log += text + "\n\n";
+        } else if (role == "thinking") {
+            chat_log += "\u2500\u2500 Thinking \u2500\u2500\n" + text + "\n\u2500\u2500\u2500\u2500\u2500\u2500\n";
+        } else if (role == "tool_start") {
+            chat_log += "[TOOL] " + text + "\n";
+        } else {
+            chat_log += text + "\n";
+        }
+    }
+
     // Cronologia prompt (freccette su/giù)
     std::vector<std::string> prompt_history;
     int prompt_history_idx = -1;
@@ -97,7 +112,7 @@ struct FTXUI::Impl {
             // --- Watchdog: resetta generating se bloccato da troppo tempo ---
             if (generating) {
                 auto now = std::chrono::steady_clock::now();
-                if (now - generating_since > std::chrono::minutes(3)) {
+                if (now - generating_since > std::chrono::minutes(15)) {
                     generating = false;
                     std::lock_guard<std::mutex> tl(text_mutex);
                     footer_text = "[Watchdog] Generazione bloccata, reset.";
@@ -132,11 +147,55 @@ struct FTXUI::Impl {
                 spinner_str = " " + std::string(1, spinner_chars[(spinner_frame / 4) % 4]);
             }
 
-            // --- Cronologia conversazione ---
-            Element chat_log_elem = emptyElement();
+            // --- Cronologia conversazione (con colori per ruolo) ---
+            Elements chat_elements;
             if (!chat_log.empty()) {
-                chat_log_elem = paragraph(chat_log) | color(Color::White);
+                std::istringstream stream(chat_log);
+                std::string line;
+                bool in_code_block = false;
+                std::string code_lang;
+                while (std::getline(stream, line)) {
+                    // Rimuovi carriage return
+                    while (!line.empty() && line.back() == '\r')
+                        line.pop_back();
+
+                    // Code block start/end
+                    if (line.size() >= 3 && line.substr(0, 3) == "```") {
+                        if (!in_code_block) {
+                            in_code_block = true;
+                            code_lang = line.size() > 3 ? line.substr(3) : "";
+                            chat_elements.push_back(
+                                text("\u250C\u2500 " + code_lang) | dim | color(Color::GrayDark));
+                        } else {
+                            in_code_block = false;
+                            chat_elements.push_back(
+                                text("\u2514\u2500") | dim | color(Color::GrayDark));
+                        }
+                        continue;
+                    }
+
+                    if (in_code_block) {
+                        chat_elements.push_back(
+                            text(" " + line) | color(Color::CyanLight) | bgcolor(Color::Grey19));
+                    } else if (line.size() > 2 && line[0] == '>' && line[1] == ' ') {
+                        chat_elements.push_back(
+                            text(line) | bold | color(Color::GreenLight));
+                    } else if (line.size() > 2 && line[0] == '#' && line[1] == '#') {
+                        chat_elements.push_back(
+                            text(line) | bold | color(Color::YellowLight));
+                    } else if (line.size() > 1 && line[0] == '#') {
+                        chat_elements.push_back(
+                            text(line) | bold | color(Color::Yellow));
+                    } else if (line.size() > 4 && line.substr(0, 4) == "[TOO") {
+                        chat_elements.push_back(
+                            text(line) | dim | color(Color::BlueLight));
+                    } else {
+                        chat_elements.push_back(
+                            text(line) | color(Color::White));
+                    }
+                }
             }
+            Element chat_log_elem = vbox(chat_elements);
 
             // --- Sezione THINKING (se presente) ---
             Element thinking_elem = emptyElement();
@@ -188,20 +247,19 @@ struct FTXUI::Impl {
                 stats_elem,
             }) | hcenter | bgcolor(Color::Black);
 
-            // --- Area di contenuto principale ---
-            // Usa focusPositionRelative per lo scroll: 1.0 = fondo, 0.0 = inizio
+            // --- Area di contenuto con scroll ---
             Element content = vbox(Elements{
                 chat_log_elem,
                 thinking_elem,
                 response_elem,
-                text(""),  // spinta in fondo
             });
+
+            // Durante la generazione, il contenuto scorre automaticamente in fondo
+            Element content_area;
             if (generating) {
                 scroll_y = 1.0f;
             }
-            Element content_area = content
-                | focusPositionRelative(0.0f, scroll_y)
-                | vscroll_indicator | yframe | flex;
+            content_area = content | focusPositionRelative(0.0f, scroll_y) | frame | flex;
 
             // --- Layout verticale completo ---
             Element doc = vbox(Elements{
@@ -356,23 +414,27 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // PageUp: scrolla su
+            // PageUp: scrolla su di ~1/3 pagina
             if (event == Event::PageUp) {
-                scroll_y = std::max(0.0f, scroll_y - 0.15f);
-                {
-                    std::lock_guard<std::mutex> tl(text_mutex);
-                    footer_text = "Scroll: " + std::to_string(scroll_y);
-                }
+                scroll_y = std::max(0.0f, scroll_y - 0.3f);
                 return true;
             }
 
-            // PageDown: scrolla giù
+            // PageDown: scrolla giu di ~1/3 pagina
             if (event == Event::PageDown) {
-                scroll_y = std::min(1.0f, scroll_y + 0.15f);
-                {
-                    std::lock_guard<std::mutex> tl(text_mutex);
-                    footer_text = "Scroll: " + std::to_string(scroll_y);
-                }
+                scroll_y = std::min(1.0f, scroll_y + 0.3f);
+                return true;
+            }
+
+            // Home: vai all'inizio
+            if (event == Event::Home) {
+                scroll_y = 0.0f;
+                return true;
+            }
+
+            // End: vai alla fine
+            if (event == Event::End) {
+                scroll_y = 1.0f;
                 return true;
             }
 
@@ -494,12 +556,12 @@ void FTXUI::set_generating(bool gen)
         std::lock_guard<std::mutex> tl(pimpl_->text_mutex);
         if (!gen && pimpl_->generating) {
             if (!pimpl_->thinking_text.empty())
-                pimpl_->chat_log += pimpl_->thinking_text + "\n";
+                pimpl_->chat_log += "\u2500\u2500 Thinking \u2500\u2500\n" + pimpl_->thinking_text + "\n\u2500\u2500\u2500\u2500\u2500\u2500\n\n";
             if (!pimpl_->response_text.empty())
                 pimpl_->chat_log += pimpl_->response_text + "\n\n";
             pimpl_->thinking_text.clear();
             pimpl_->response_text.clear();
-            pimpl_->footer_text = "Pronto.";
+            pimpl_->footer_text = "Pronto. Scrivi o /help per comandi.";
         }
     }
     pimpl_->generating = gen;
@@ -576,6 +638,10 @@ void FTXUI::show_history(const std::vector<std::pair<std::string, std::string>> 
             pimpl_->chat_log += "> " + content + "\n";
         } else if (role == "assistant" || role == "model") {
             pimpl_->chat_log += content + "\n\n";
+        } else if (role == "system") {
+            pimpl_->chat_log += "[SYSTEM] " + content + "\n";
+        } else if (role == "tool") {
+            pimpl_->chat_log += "[TOOL] " + content + "\n";
         }
     }
     pimpl_->screen.RequestAnimationFrame();

@@ -137,43 +137,6 @@ bool Agent::init()
     if (s.temp > 0.0f)
         llama_sampler_chain_add(sampler_, llama_sampler_init_temp(s.temp));
 
-    // --- Grammar-constrained decoding per tool call JSON ---
-    // Usa una lazy grammar: si attiva quando il modello emette {"tool",
-    // e forza la sintassi JSON valida per il resto del tool call.
-    // Quando non attiva, il modello genera testo libero senza vincoli.
-    {
-        const char * grammar_str =
-            "root ::= \"{\" ws \"\\\"tool\\\"\" ws \":\" ws string ws \",\" ws \"\\\"args\\\"\" ws \":\" ws \"{\" ws args ws \"}\" ws \"}\""
-            "\n\n"
-            "string ::="
-            "\n  \"\\\"\" ("
-            "\n    [^\"\\\\\\x7F\\x00-\\x1F] |"
-            "\n    \"\\\\\" ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])"
-            "\n  )* \"\\\"\" ws"
-            "\n\n"
-            "args ::= arg (\",\" ws arg)*"
-            "\narg ::= \"\\\"\" arg-name \"\\\"\" ws \":\" ws value"
-            "\narg-name ::= \"command\" | \"path\" | \"content\" | \"pattern\" | \"url\" | \"format\" | \"timeout\" | \"tool\" | \"function\" | \"arguments\" | \"parameters\" | \"name\" | \"description\""
-            "\n\n"
-            "value ::= string | number | \"true\" | \"false\" | \"null\""
-            "\nnumber ::= \"-\"? ([0-9] | [1-9] [0-9]{0,15}) (\".\" [0-9]+)?"
-            "\n\n"
-            "ws ::= | \" \" | \"\\n\" [ \\t]{0,20}";
-
-        const char * trigger = "\\{\\\"tool";
-        const char * trigger_patterns[] = { trigger };
-        const llama_vocab * vocab = llama_model_get_vocab(model_);
-
-        auto * grammar_sampler = llama_sampler_init_grammar_lazy_patterns(
-            vocab, grammar_str, "root",
-            trigger_patterns, 1,
-            nullptr, 0);
-
-        if (grammar_sampler) {
-            llama_sampler_chain_add(sampler_, grammar_sampler);
-        }
-    }
-
     llama_sampler_chain_add(sampler_, llama_sampler_init_dist(s.seed));
 
     // Batch per decoding
@@ -184,13 +147,25 @@ bool Agent::init()
     kvcache_->set_cache_key(cache_key);
 
     std::vector<llama_token> cached_tokens;
-    if (kvcache_->load(ctx_, cached_tokens)) {
-        fprintf(stderr, "[Agent] KVCache caricata: %zu token da file\n", cached_tokens.size());
+    bool loaded = false;
 
-        // Ricostruisce la KVCache valutando i token uno per uno.
-        // Invece di usare llama_state_load_file (che ha problemi di
-        // cell metadata con modelli ricorrenti), salviamo solo i token
-        // e ricostruiamo la cache valutandoli in batch.
+    // 1) Tentativo FAST: carica stato binario (millisecondi)
+    if (kvcache_->load_state(ctx_, cached_tokens)) {
+        fprintf(stderr, "[Agent] KVCache ripristinata da stato binario: %zu token\n",
+                cached_tokens.size());
+        conversation_tokens_ = std::move(cached_tokens);
+        n_past_ = (int)conversation_tokens_.size();
+
+        if (load_conversation()) {
+            fprintf(stderr, "[Agent] Cronologia conversazione caricata: %zu messaggi\n",
+                    history_.size());
+        }
+        loaded = true;
+    }
+
+    // 2) Fallback TOKEN: tenta il caricamento token e ricostruisce
+    if (!loaded && kvcache_->load(ctx_, cached_tokens)) {
+        fprintf(stderr, "[Agent] KVCache caricata: %zu token da file\n", cached_tokens.size());
         fprintf(stdout, "\r\033[K[KVCache] Ricostruzione %zu token...   0%%",
                 cached_tokens.size());
         fflush(stdout);
@@ -225,12 +200,14 @@ bool Agent::init()
         conversation_tokens_ = std::move(cached_tokens);
         fprintf(stderr, "[Agent] KVCache ricostruita: n_past=%d token\n", n_past_);
 
-        // Carica anche la cronologia testuale
         if (load_conversation()) {
             fprintf(stderr, "[Agent] Cronologia conversazione caricata: %zu messaggi\n",
                     history_.size());
         }
-    } else {
+        loaded = true;
+    }
+
+    if (!loaded) {
         fprintf(stderr, "[Agent] Nessuna cache trovata, partenza da zero\n");
     }
 
@@ -386,14 +363,15 @@ void Agent::process_prompt_sync(const std::string & prompt)
                  n_eval, n_past_ - n_eval);
         fprintf(stderr, "\033[34m[Agent] llama_decode %s\033[0m\n", batch_msg);
         if (ui_) ui_->show_info(batch_msg);
-        std::atomic<bool> decode_done{false};
-        auto decode_start = std::chrono::high_resolution_clock::now();
-        std::thread progress_thread([this, &decode_done, &decode_start]() {
-            for (int k = 0; k < 120 && !decode_done; k++) {
+        auto decode_done = std::make_shared<std::atomic<bool>>(false);
+        auto decode_start = std::make_shared<std::chrono::high_resolution_clock::time_point>(
+            std::chrono::high_resolution_clock::now());
+        std::thread progress_thread([this, decode_done, decode_start]() {
+            for (int k = 0; k < 120 && !*decode_done; k++) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
-                if (!decode_done) {
+                if (!*decode_done) {
                     auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::high_resolution_clock::now() - decode_start).count();
+                        std::chrono::high_resolution_clock::now() - *decode_start).count();
                     char buf[128];
                     snprintf(buf, sizeof(buf), "Decode in corso... (%llds)", (long long)secs);
                     fprintf(stderr, "\033[34m[Agent] %s\033[0m\n", buf);
@@ -403,9 +381,9 @@ void Agent::process_prompt_sync(const std::string & prompt)
         });
         progress_thread.detach();
         int ret = llama_decode(ctx_, batch_);
-        decode_done = true;
+        *decode_done = true;
         auto decode_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - decode_start).count();
+            std::chrono::high_resolution_clock::now() - *decode_start).count();
         fprintf(stderr, "\033[34m[Agent] llama_decode batch finito: ret=%d (%lldms)\033[0m\n",
                 ret, (long long)decode_ms);
         if (ret) {
@@ -468,9 +446,10 @@ void Agent::on_generation_done()
     if (done_called_) return;
     done_called_ = true;
 
-    // Salva KVCache
+    // Salva KVCache (token + stato binario)
     if (ctx_ && !conversation_tokens_.empty()) {
         kvcache_->save(ctx_, conversation_tokens_);
+        kvcache_->save_state(ctx_, conversation_tokens_);
     }
 
     // Salva cronologia testuale
@@ -716,6 +695,7 @@ void Agent::handle_tool_call(const std::string & name,
                 common_batch_clear(batch_);
                 common_batch_add(batch_, t[i], n_past_, {0}, i == t.size() - 1);
                 n_past_++;
+                conversation_tokens_.push_back(t[i]);
                 llama_decode(ctx_, batch_);
             }
             return;
@@ -727,6 +707,7 @@ void Agent::handle_tool_call(const std::string & name,
             common_batch_clear(batch_);
             common_batch_add(batch_, t[i], n_past_, {0}, i == t.size() - 1);
             n_past_++;
+            conversation_tokens_.push_back(t[i]);
             llama_decode(ctx_, batch_);
         }
         return;
@@ -748,6 +729,7 @@ void Agent::handle_tool_call(const std::string & name,
         common_batch_clear(batch_);
         common_batch_add(batch_, ft[i], n_past_, {0}, i == ft.size() - 1);
         n_past_++;
+        conversation_tokens_.push_back(ft[i]);
         if (llama_decode(ctx_, batch_)) {
             ui_->show_error("Errore nell'iniezione del risultato del tool");
             break;

@@ -1,255 +1,249 @@
-# Piano di Sviluppo — llama-agent vs opencode
+# Piano di Sviluppo — llama-agent
 
 ## Stato Attuale (Implementato)
 
 ### Core Inferenza
 - [x] Backend llama.cpp via FetchContent
 - [x] Caricamento modello (GGUF) con tutti i flag llama-cli
-- [x] Context management (n_ctx, n_past, batch decode)
+- [x] Context management (n_ctx, n_past, batch decode) con gestione overflow
 - [x] Sampling chain (temp, top-k, top-p, min-p, penalties, seed)
 - [x] Tokenizzazione/detokenizzazione via common_*
-- [x] ReasoningDetector (tag + heuristic thinking/response split)
+- [x] ReasoningDetector (split thinking/response)
 - [x] StreamingBuffer thread-safe con callback UI
 
 ### KVCache Persistente
-- [x] Token-file persistenza (evita binary state issues con modelli ricorrenti)
-- [x] Ricostruzione KVCache all'avvio con progress bar animata
+- [x] Fast mode: `llama_state_save_file` / `llama_state_load_file` — ripristino in ms
+- [x] Token mode: token-file con ricostruzione KVCache + barra di progresso
+- [x] Fallback automatico: stato binario corrotto -> ricostruzione da token
 - [x] Checkpoint prompt-only per /regen
-- [x] Salvataggio/caricamento cronologia conversazione JSON
-- [x] Flag --no-cache
+- [x] Cronologia conversazione JSON (salva/carica)
+- [x] Flag: `--cache-mode fast|token`, `--no-cache`
 
 ### UI
-- [x] FTXUI TUI con split pane (thinking + response + input)
-- [x] Colori: thinking YellowLight, response White
-- [x] Scroll via PgUp/PgDn con focusPositionRelative + vscroll_indicator
-- [ ] **PgUp/PgDn ancora non scrolla correttamente** (scroll_y cambia ma viewport fermo)
-- [x] Footer statistiche (token, tps, cache_size)
-- [x] Spinner durante generazione
-- [x] SimpleUI (ANSI console, --simple-ui)
+- [x] FTXUI TUI con area contenuto scrollabile + input + footer
+- [x] Scroll PgUp/PgDn/Home/End con `frame` + `focusPositionRelative`
+- [x] Colori per ruolo: utente (verde), assistant (bianco), tool call (blu), code block (sfondo grigio, testo cyan), heading (giallo)
+- [x] Thinking separato con header `── Thinking ──`
+- [x] Footer: token, T/s, contesto (n_past/n_ctx), cache size
+- [x] Spinner animato durante generazione
+- [x] SimpleUI alternativa (ANSI, --simple-ui)
 - [x] Comandi slash: /help, /clear, /regen, /exit
 - [x] Supporto --single-turn con -p
 
-### Strumenti (6 tools)
-- [x] `bash` — esecuzione comandi shell
+### Tool Calling (7 tools)
+- [x] `bash` — comandi shell con timeout configurabile, cattura stderr
 - [x] `read` — lettura file
 - [x] `write` — scrittura file
-- [x] `grep` — ricerca regex nei contenuti
+- [x] `grep` — ricerca regex ricorsiva
 - [x] `glob` — match pattern file
+- [x] `find` — ricerca file nativa C++ (std::filesystem + fnmatch, max_depth, tipo)
 - [x] `fetch` — download URL
-- [x] Tool calling JSON: `{"tool": "...", "args": {...}}`
+- [x] Tool call JSON: `{"tool": "...", "args": {...}}` con supporto markdown
 - [x] Tool result injection nel contesto
-- [x] Limite di tool call per turno (default 10)
+- [x] Limite tool call per turno (--tool-limit)
 - [x] ToolRegistry con schema JSON per system prompt
+
+### JSON Parsing
+- [x] Estrazione JSON block: `skip_json_string()` ignora `{}` dentro stringhe
+- [x] Estrazione valore: escape-aware, non troncata da `"` interne
+- [x] Parsing tool call: scan lineare chiavi fuori dalle stringhe, no falsi match
+- [x] Supporto: key alias (`tool`/`function`/`tool_call`), args alias (`args`/`parameters`/`params`)
+- [x] 37 parser test passano
 
 ### Permessi
 - [x] Sistema gerarchico: globale → per-tool → per-pattern
 - [x] Tre stati: ALLOW / ASK / DENY
-- [x] Pattern matching (glob-like: `*.txt`, `/etc/*`, `rm -rf *`)
-- [x] Session permanent allow
-- [x] Default: read/glob/grep=ALLOW, write=ALLOW, bash=ASK
-
-### JSON Parsing & Grammar
-- [x] Parsing JSON string-aware (skip_json_string): `{}` e `"` dentro contenuti non confondono il parser
-- [x] Scansione lineare chiavi fuori dalle stringhe: falsi key-value nel content non generano falsi match
-- [x] Regex trigger `{"tool` per attivazione lazy grammar
-- [x] GBNF grammar per tool call JSON: root → tool-call → args → string → value
+- [x] Pattern matching glob-like
+- [x] UI overlay permessi in FTXUI
+- [x] Default: read/grep/glob/find=ALLOW, write=ALLOW, bash=ASK, fetch=ASK
 
 ### Build
 - [x] `build.sh` con 10 profili: debug, release, cuda, vulkan, hip, metal, sycl, blas, openmp, all
-- [x] `CMAKE_FLAGS_EXTRA` env var per flag extra
-- [x] `build.conf` file per configurazione persistente
-- [x] `.gitignore`
-- [x] README.md con build/usage/tool-calling docs
-- [x] Git repo init con 2 commit
+- [x] `CMAKE_FLAGS_EXTRA` per flag CMake aggiuntivi
+- [x] `build.conf` per configurazione persistente
+- [x] README.md e PLAN.md aggiornati
 
 ---
 
-## Feature Analysis: llama-agent vs opencode
+## Feature Raccomandate (basato su analisi di pi-mono)
 
-| Feature | opencode | llama-agent | Priority |
-|---------|----------|-------------|----------|
-| Chat TUI | ✅ | ✅ FTXUI + SimpleUI | - |
-| KVCache persistente | ❌ | ✅ Token-based | - |
-| Tool calling | ✅ 13 tools | ✅ 6 tools + lazy grammar GBNF | - |
-| Systema permessi | ✅ Granulare | ✅ Gerarchico 3-stati | - |
-| Session management (--continue, --session, --fork) | ✅ | ❌ | **HIGH** |
-| Multi-provider (Anthropic, OpenAI, Google, Groq, AWS, GCP, Azure, DeepSeek, xAI, HuggingFace, Together, Ollama, LM Studio, etc.) | ✅ | ❌ (solo llama.cpp) | **HIGH** |
-| Web search (tavily, google, etc.) | ✅ | ❌ | **HIGH** |
-| LSP integration (code editing con diagnostics) | ✅ | ❌ | **MEDIUM** |
-| Agent system (create/customize agents) | ✅ | ❌ | **MEDIUM** |
-| Sub-agents (task orchestration) | ✅ | ❌ | **LOW** |
-| Task management (todo.md, todo list UI) | ✅ | ❌ | **MEDIUM** |
-| MCP server mode | ✅ | ❌ | **MEDIUM** |
-| File editing with diagnostics + lint | ✅ | ❌ (write è raw) | **MEDIUM** |
-| Multi-turn planning | ✅ | ❌ | **LOW** |
-| Extensions/plugins | ✅ | ❌ | **LOW** |
-| Session state persistence (full snapshot) | ✅ | ❌ (solo token) | **LOW** |
-| Image/video input | ✅ | ❌ | **LOW** |
-| Custom slash commands | ❌ | ✅ /help, /clear, /regen, /exit | - |
-| Progress bar cache rebuild | ❌ | ✅ | - |
+### P0 — Priorità Massima (stabilità e usabilità)
 
----
-
-## TODO List (Prioritized)
-
-### P0 — Must Have (prima release)
-
-- [ ] **Fix PgUp/PgDn scrolling** — `scroll_y` cambia ma viewport non si muove. Probabile soluzione: `Container::Vertical` con focusability sugli elementi interni, invece di raw yframe
-- [x] **JSON parsing robusto** — 3 bug fixati in `extract_json_block`, `extract_json_value`, `parse_tool_call` (string-aware parsing con `skip_json_string`)
-- [x] **Grammar-constrained decoding** — `llama_sampler_init_grammar_lazy_patterns` per tool call JSON con trigger `{"tool`
-- [ ] **Session management system** — salva/carica conversazione completa:
-  - `--session <name>` per sessioni multiple (invece di singolo .cache/)
+- [ ] **Session management con tree**:
+  - Sessioni JSONL con `id`/`parentId` (come pi) — branching senza duplicare file
+  - `--session <name>` per sessioni multiple
   - `--continue` per riprendere ultima sessione
-  - `--fork <session>` per creare un branch della sessione
-  - Salva: KVCache tokens + cronologia JSON + metadata (modello, parametri, timestamp)
-  - Struttura directory: `.sessions/<session_name>/`
+  - `--fork <session>` per creare branch
+  - `/tree` comando per navigare l'albero della sessione
+  - Struttura: ogni entry ha id, parentId, turn (user/assistant/toolResult), timestamp
 
-### P1 — High Priority
+- [ ] **Skills system** (Agent Skills standard):
+  - Carica file `SKILL.md` da `.skills/`, `~/.config/llama-agent/skills/`
+  - `/skill:name` per invocare manualmente
+  - Inietta skills nel system prompt come ` <skill name="...">...</skill>`
+  - Il modello decide quando caricare automaticamente
+  - Sistema plugin-like senza codice: basta scrivere un file markdown
 
-- [ ] **Config file** (JSON/YAML), caricato automaticamente:
-  ```yaml
-  model: ~/models/qwen2.5-7b.gguf
-  default_session: main
-  ngl: 35
-  temperature: 0.7
-  tools:
-    bash: allow
-    write: ask
-    fetch: ask
+- [ ] **Config file** (JSON):
+  ```json
+  {
+    "model": "~/models/qwen2.5-7b.gguf",
+    "cache_mode": "fast",
+    "n_ctx": 8192,
+    "temperature": 0.7,
+    "permissions": {
+      "bash": "ask",
+      "write": "allow"
+    },
+    "system_prompt": "Sei un assistente esperto in C++...",
+    "context_files": ["AGENTS.md", "CLAUDE.md"]
+  }
   ```
+  - Caricamento: `~/.config/llama-agent/config.json` (globale) + `.llama-agent.json` (progetto)
+  - Merge: progetto sovrascrive globale
 
-- [ ] **Multi-provider abstraction layer**:
-  - `class Backend` virtuale (llama.cpp locale, API remota via HTTP)
-  - Provider: OpenAI-compatible API, Ollama, Anthropic
-  - `--provider openai --api-key ... --model gpt-4`
-  - `--provider ollama --model llama3`
-  - Switch a runtime tra provider
+### P1 — Alta Priorità (funzionalità chiave)
+
+- [ ] **Tool: smart edit** (sostituisce write raw):
+  - `edit <file> <"old_string"> <"new_string">` — string replacement con context matching
+  - `edit <file> <start_line> <end_line> <"new_content">` — line-based editing
+  - Verifica pre-edit: il file esiste, old_string è unico
+  - Diff preview prima dell'applicazione
+  - Rollback automatico se la modifica rompe la compilazione (opzionale)
+
+- [ ] **Tool result strutturato**:
+  ```cpp
+  struct ToolResult {
+      bool success;
+      bool is_error = false;          // esplicito: errore del tool
+      std::string content;            // per il LLM
+      std::map<std::string, std::string> details;  // metadati (file_size, match_count, ...)
+  };
+  ```
+  - Separa contenuto LLM da metadati
+  - Tool possono troncare output ma mantenere info complete nei details
+
+- [ ] **before_tool_call / after_tool_call hooks**:
+  - `beforeToolCall`: path protection, sandbox, conferma aggiuntiva
+  - `afterToolCall`: filtra output, aggiungi metadati, tronca se troppo lungo
+
+- [ ] **Markdown rendering migliorato**:
+  - Code block syntax highlighting (delega a libreria esterna o regex base per C++/Python/JS)
+  - Link cliccabili
+  - Liste indentate con bullet `•`
+
+### P2 — Media Priorità (espansione)
+
+- [ ] **Extensions system**:
+  - Directory `~/.config/llama-agent/extensions/`
+  - Extension = shared library `.so` con API:
+    ```cpp
+    extern "C" void register_extension(ToolRegistry & tools, PermissionManager & perms);
+    ```
+  - Ogni extension può: registrare tool, aggiungere comandi slash, hook sugli eventi
+  - Caricamento automatico a startup
+
+- [ ] **Più tool file-system**:
+  - `ls <path>` — lista contenuto directory (colonne: nome, tipo, dimensione)
+  - `tree <path> <max_depth>` — visualizzazione ad albero
+  - `rm <path>` — elimina file (protetto da permessi)
+  - `mv <from> <to>` — sposta/rinomina file
+
+- [ ] **Comandi slash estesi**:
+  - `/model` — mostra modello corrente
+  - `/session` — mostra info sessione (ID, file, messaggi, token, costo)
+  - `/stats` — statistiche dettagliate (memoria, throughput, latenza)
+  - `/compact` — compatta contesto (riassumi messaggi vecchi, mantieni ultimi N)
+
+- [ ] **Multi-provider abstraction**:
+  - `class Backend` virtuale: llama.cpp locale + API remote
+  - Provider iniziale: OpenAI-compatible API (`--provider openai --api-key ...`)
+  - Switch a runtime, stesso flusso di tool calling
 
 - [ ] **Web search tool**:
-  - `web_search(query, num_results=5)` — chiama API search (Tavily, Google, Bing, o SearXNG self-hosted)
+  - `web_search <query> [num_results=5]` — via SearXNG self-hosted o API
+  - Config: URL server, API key
   - Render risultati come contesto strutturato
-  - Config API key via config file o env var
+
+### P3 — Bassa Priorità (nice to have)
+
+- [ ] **TUI miglioramenti**:
+  - Autocompletamento file path (`@` + Tab, come pi) con fuzzy search
+  - Mouse wheel scroll
+  - Syntax highlighting nel code block con shiki/tree-sitter
+  - Temi chiaro/scuro selezionabili
+  - Commutazione thinking level visiva (bordo input colorato)
+
+- [ ] **Steering messages**:
+  - Invia messaggi mentre l'agente lavora (durante esecuzione tool)
+  - Coda messaggi: steering (consegnato dopo turno corrente) e follow-up (dopo che l'agente finisce)
+
+- [ ] **Tool: task management**:
+  - `task_create <title> <description>` — crea task
+  - `task_list` — mostra task attivi
+  - `task_update <id> <status>` — aggiorna stato (todo/in_progress/done)
+  - Persistenza: `.cache/tasks.json`
+
+- [ ] **Tool: git integration**:
+  - `git_diff` — mostra diff non committato
+  - `git_log [n=10]` — ultimi commit
+  - `git_status` — stato working tree
+  - `git_branch` — branch corrente + lista
 
 - [ ] **LSP integration**:
-  - `lsp_hover(file, line, col)` — mostra info simbolo
-  - `lsp_diagnostics(file)` — errori/warning del file corrente
-  - `lsp_goto_definition(file, line, col)` — naviga a definizione
-  - `lsp_complete(file, line, col)` — completamento codice
-  - Cliente LSP leggero via socket/stdio
-
-### P2 — Medium Priority
+  - `lsp_diagnostics <file>` — errori/warning
+  - `lsp_hover <file> <line> <col>` — info simbolo
+  - Cliente LSP leggero via stdio
 
 - [ ] **Agent profiles**:
-  - `agent create --name "coder" --system-prompt "..." --tools "bash,read,write,grep,lsp"`
-  - `agent list` / `agent use <name>`
-  - Profili predefiniti: `coder`, `researcher`, `writer`, `default`
-  - Ogni profilo ha: system prompt, tool set, permission defaults, model
-
-- [ ] **Smart file editing** (sostituisce write raw):
-  - `edit <file> <old_string> <new_string>` con context matching
-  - `edit <file> <line> <new_content>` per line-based editing
-  - `insert <file> <after_line> <content>`
-  - Verifica diagnostica post-edit (se LSP attivo)
-  - Diff preview prima dell'applicazione
-
-- [ ] **Task management**:
-  - `/todo` — mostra task list corrente
-  - `/todo add "fix scrolling bug"` — aggiunge task
-  - `/todo done 1` — segna task completato
-  - `/todo clear` — pulisce task completati
-  - Salva/carica task da `.session/tasks.json`
-
-- [ ] **MCP server mode**:
-  - `--mcp` flag: avvia come server MCP (Model Context Protocol)
-  - Espone tools come MCP resources
-  - Permette a editor esterni (Cursor, VS Code via Continue) di usare llama-agent come backend AI
-
-### P3 — Nice to Have
-
-- [ ] **Multi-agent orchestration**:
-  - `agent spawn <profile> "risolvi questo bug"` — lancia sub-agente in thread separato
-  - Risultato asincrono: sub-agente risponde quando ha finito
-  - Task routing: router agent distribuisce subtask ad agenti specializzati
-
-- [ ] **Full session snapshot** (alternative a token-file):
-  - `llama_state_save_file` + `llama_state_load_file` per snapshot binario completo
-  - Avanzamento: più veloce del token rebuild ma fragile con modelli ricorrenti
-  - Opzione: `--cache-mode token|binary`
-
-- [ ] **Multi-modal input**:
-  - Supporto immagini (llama.cpp multimodal via mmproj)
-  - `/image <path>` — carica immagine nel contesto
-  - Vision tool: `describe_image(path)` — descrive contenuto immagine
-
-- [ ] **Plugin/extensions system**:
-  - Directory `~/.config/llama-agent/plugins/`
-  - Plugin = shared library `.so` o script `.lua` con funzione `register_tools()`
-  - API plugin: `register_tool(name, description, schema, executor)`
-
-- [ ] **TUI improvements**:
-  - Mouse wheel scroll
-  - Tab completion per path nel input field
-  - Syntax highlighting nei tool output
-  - Split verticale/horizontale configurabile
-  - Pannello cronologia laterale
-  - Tema chiaro/scuro
-
-- [ ] **Grid search / benchmark**:
-  - `--benchmark` flag: testa modello su prompt standard
-  - Report: tps, memory usage, cache size, context utilization
-  - Confronto tra parametri (temp, top-p, context size)
+  - Profili predefiniti: `coder` (bash, read, write, grep, find), `researcher` (read, grep, fetch, find), `sysadmin` (bash, read, find)
+  - Ogni profilo: system prompt, tool set, permission defaults
+  - `--profile coder`
 
 ---
 
-## Architettura Future
+## Architettura Proposta
 
 ```
 llama-agent/
 ├── src/
-│   ├── main.cpp           # Entry point, CLI parsing
-│   ├── agent.cpp/h        # Core loop, orchestration
-│   ├── backends/          # Multi-provider
-│   │   ├── backend.h      # Interfaccia virtuale Backend
-│   │   ├── llama_backend.cpp/h  # llama.cpp locale
-│   │   ├── openai_backend.cpp/h # API OpenAI-compatibile
-│   │   └── ollama_backend.cpp/h # Ollama API
-│   ├── sessions/          # Session management
-│   │   ├── session.h/cpp  # Session salva/carica/fork
-│   │   └── history.h/cpp  # Cronologia conversazione
-│   ├── agents/            # Agent system
-│   │   ├── agent_profile.h/cpp  # Profili agente
-│   │   └── orchestrator.h/cpp   # Multi-agent dispatch
-│   ├── tools/
-│   │   ├── tools.cpp/h    # ToolRegistry + 6 core tools
-│   │   ├── lsp.cpp/h      # LSP integration tool
-│   │   └── web.cpp/h      # Web search tool
-│   ├── permissions.cpp/h  # Permission system
-│   ├── kvcache.cpp/h      # KVCache persistence
-│   ├── reasoning.cpp/h    # Thinking/response detection
-│   ├── streaming.cpp/h    # Token streaming buffer
-│   ├── ui.cpp/h           # UI base + SimpleUI
-│   └── ui_ftxui.cpp       # FTXUI TUI
-├── build.sh               # Multi-profile build
+│   ├── main.cpp              # Entry point, CLI
+│   ├── agent.h / .cpp        # Core loop, orchestration
+│   ├── kvcache.h / .cpp      # Persistenza KVCache (fast + token mode)
+│   ├── tools.h / .cpp        # ToolRegistry + 7 core tools
+│   ├── permissions.h / .cpp  # Sistema permessi gerarchico
+│   ├── sessions/             # NEW: Session tree JSONL
+│   │   ├── session.h / .cpp
+│   │   └── tree.h / .cpp
+│   ├── skills/               # NEW: Agent Skills loader
+│   │   └── skills.h / .cpp
+│   ├── extensions/           # NEW: Extension loader
+│   │   └── extensions.h / .cpp
+│   ├── backends/             # NEW: Multi-provider
+│   │   ├── backend.h         # Interfaccia virtuale
+│   │   ├── llama_backend.h/cpp  # llama.cpp locale
+│   │   └── openai_backend.h/cpp # API OpenAI-compatibile
+│   ├── reasoning.h / .cpp    # Thinking/response detection
+│   ├── streaming.h / .cpp    # Token streaming buffer
+│   ├── ui.h / .cpp           # UI base + SimpleUI
+│   └── ui_ftxui.cpp          # FTXUI TUI
+├── toolstest/                # Test suite parsing
+├── build.sh                  # Multi-profile build
 ├── CMakeLists.txt
 └── README.md
 ```
 
-## Dipendenze Future
+## Metrica di Successo v0.2.0
 
-| Libreria | Scopo |
-|----------|-------|
-| httplib (cpp-httplib) | Chiamate HTTP per provider esterni e web search |
-| nlohmann/json | Già presente via llama.cpp, per parsing JSON robusto |
-| Lua/sol2 | Opzionale: plugin system scripting |
-| libcurl | Per fetch tool + API calls |
+- [ ] Session management con tree JSONL: `--session`, `--continue`, `--fork`, `/tree`
+- [ ] Skills system: `SKILL.md` loading, `/skill:name`
+- [ ] Config file JSON: globale + progetto, merge
+- [ ] Tool `edit` con string replacement
+- [ ] before_tool_call / after_tool_call hooks
+- [ ] Markdown code block con syntax highlighting base
 
-## Metriche di Successo v0.1.0
+## Riferimenti
 
-- [ ] PgUp/PgDn scrolling funzionante
-- [ ] Session management: `--session`, `--continue`, `--fork`
-- [ ] Config file: `.llama-agent.json` o `llama-agent.yml`
-- [ ] Almeno un provider remoto (OpenAI-compatible)
-- [ ] Web search tool funzionante
-- [ ] LSP integration base (diagnostics + hover)
-
-```
+- [pi-mono](https://github.com/earendil-works/pi) — ispirazione per UI (differential rendering, autocomplete), tools (edit, grep, find, ls), session tree, extensions, skills
+- [Agent Skills standard](https://agentskills.io) — formato `SKILL.md` per skills portabili
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) — backend di inferenza

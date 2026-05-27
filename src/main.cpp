@@ -73,16 +73,16 @@
  */
 static int filter_agent_args(int argc, char ** argv,
                               bool & out_simple_ui, bool & out_no_cache,
-                              int & out_tool_limit)
+                              int & out_tool_limit,
+                              std::string & out_cache_mode)
 {
-    int write_idx = 1;  // argv[0] e' il nome del programma, non si tocca
+    int write_idx = 1;
 
     for (int read_idx = 1; read_idx < argc; read_idx++) {
         std::string arg(argv[read_idx]);
 
         if (arg == "--simple-ui") {
             out_simple_ui = true;
-            // Salta questo argomento (non lo copiamo)
             continue;
         }
 
@@ -91,19 +91,23 @@ static int filter_agent_args(int argc, char ** argv,
             continue;
         }
 
-        if (arg == "--tool-limit" && read_idx + 1 < argc) {
-            out_tool_limit = std::atoi(argv[read_idx + 1]);
-            read_idx++;  // Salta anche il valore
+        if (arg == "--cache-mode" && read_idx + 1 < argc) {
+            out_cache_mode = argv[read_idx + 1];
+            read_idx++;
             continue;
         }
 
-        // Argomento non riconosciuto come nostro: copialo
+        if (arg == "--tool-limit" && read_idx + 1 < argc) {
+            out_tool_limit = std::atoi(argv[read_idx + 1]);
+            read_idx++;
+            continue;
+        }
+
         argv[write_idx++] = argv[read_idx];
     }
 
-    // Termina la lista con nullptr (convenzione argv)
     argv[write_idx] = nullptr;
-    return write_idx;  // Nuovo argc
+    return write_idx;
 }
 
 // ===========================================================================
@@ -120,6 +124,7 @@ int main(int argc, char ** argv)
     bool simple_ui = false;
     bool no_cache = false;
     int  tool_limit = 10;
+    std::string cache_mode = "fast";
 
     // --- Parametri comuni (stessi di llama-cli) ---
     common_params params;
@@ -130,7 +135,7 @@ int main(int argc, char ** argv)
 
     // --- Parsing argomenti CLI ---
     // Prima: filtra i flag specifici di llama-agent da argv
-    argc = filter_agent_args(argc, argv, simple_ui, no_cache, tool_limit);
+    argc = filter_agent_args(argc, argv, simple_ui, no_cache, tool_limit, cache_mode);
 
     // Poi: parsing standard dei parametri llama-cli con l'argv filtrato
     if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_CLI)) {
@@ -167,6 +172,15 @@ int main(int argc, char ** argv)
                 params.path_prompt_cache.c_str());
     }
 
+    // Imposta modalitÃ  cache
+    CacheMode mode = CacheMode::FAST;
+    if (cache_mode == "token") {
+        mode = CacheMode::TOKEN;
+        fprintf(stderr, "[Config] Cache mode: token (solo token, prefill all'avvio)\n");
+    } else {
+        fprintf(stderr, "[Config] Cache mode: fast (stato binario)\n");
+    }
+
     fprintf(stderr, "[Config] Tool limit: %d per turno\n", tool_limit);
     fprintf(stderr, "\n");
 
@@ -186,6 +200,9 @@ int main(int argc, char ** argv)
 
     // --- Creazione agente ---
     auto agent = std::make_unique<Agent>(params, cache_disabled);
+
+    // Imposta modalitÃ  cache prima di init
+    agent->set_cache_mode(mode);
 
     // --- Inizializzazione agente (carica modello e contesto) ---
     if (!agent->init()) {

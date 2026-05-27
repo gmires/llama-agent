@@ -96,6 +96,11 @@ public:
     void get_stats(int & out_tokens, float & out_tps, size_t & out_cache_size) const;
 
     /**
+     * Imposta la modalitÃ  di cache (fast/token).
+     */
+    void set_cache_mode(CacheMode mode) { kvcache_->set_mode(mode); }
+
+    /**
      * Notifica che la generazione è terminata (chiamato dal thread di inferenza).
      * Salva KVCache + cronologia conversazione su disco.
      */
