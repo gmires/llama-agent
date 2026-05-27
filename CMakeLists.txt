@@ -9,6 +9,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # =============================================================================
+# Accelerazione GPU opzionale
+# =============================================================================
+option(LLAMA_CUDA  "Build with CUDA support"   OFF)
+
+# =============================================================================
 # Dipendenze esterne via FetchContent
 # =============================================================================
 include(FetchContent)
@@ -20,6 +25,9 @@ include(FetchContent)
 # NOTA: LLAMA_BUILD_COMMON deve essere ON per avere la libreria llama-common
 # che contiene common_params_parse, common_init_from_params e altre utilita'.
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+if (LLAMA_CUDA)
+    set(LLAMA_CUDA ON CACHE BOOL "" FORCE)
+endif()
 
 FetchContent_Declare(llama
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
