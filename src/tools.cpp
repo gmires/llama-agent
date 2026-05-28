@@ -11,6 +11,45 @@
 
 namespace fs = std::filesystem;
 
+/**
+ * Espande pattern con parentesi graffe: *.{h,cpp} -> [*.h, *.cpp]
+ * Supporta un solo livello di {} per semplicità.
+ * Es: file.{html,css,js} -> [file.html, file.css, file.js]
+ */
+static std::vector<std::string> expand_braces(const std::string & pattern) {
+    std::vector<std::string> result;
+    size_t open = pattern.find('{');
+    size_t close = pattern.find('}', open);
+    if (open == std::string::npos || close == std::string::npos) {
+        result.push_back(pattern);
+        return result;
+    }
+    std::string prefix = pattern.substr(0, open);
+    std::string suffix = pattern.substr(close + 1);
+    std::string middle = pattern.substr(open + 1, close - open - 1);
+    std::istringstream ss(middle);
+    std::string part;
+    while (std::getline(ss, part, ',')) {
+        result.push_back(prefix + part + suffix);
+    }
+    return result;
+}
+
+/**
+ * Converte un pattern con parentesi in regex base per find -path.
+ * Es: *.h -> *.h,  *.{h,cpp} -> "*.h -o -name *.cpp"
+ */
+static std::string pattern_to_find_args(const std::string & pattern) {
+    auto parts = expand_braces(pattern);
+    if (parts.size() == 1) return parts[0];
+    std::string out;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i > 0) out += " -o -name ";
+        out += "\"" + parts[i] + "\"";
+    }
+    return out;
+}
+
 /*
  * ============================================================================
  * ToolRegistry: registro e dispatcher di strumenti per l'agente.
@@ -221,9 +260,10 @@ ToolRegistry::ToolRegistry()
     register_tool({
         "glob",
         "Trova file e directory usando un pattern glob. "
-        "Supporta pattern come `**/*.cpp`, `src/**`, `*.txt`, ecc.",
+        "Supporta brace expansion: *.{html,css,js} -> *.html, *.css, *.js. "
+        "Supporta pattern annidati come `**/*.cpp`, `src/**`, `*.txt`, ecc.",
         {
-            {"pattern", "string", "Pattern glob per trovare i file", true}
+            {"pattern", "string", "Pattern glob per trovare i file (supporta {a,b})", true}
         },
         [](const std::map<std::string, std::string> & args) -> ToolResult {
             const auto it = args.find("pattern");
@@ -231,24 +271,26 @@ ToolRegistry::ToolRegistry()
                 return {false, "", "Parametro 'pattern' mancante"};
             }
 
-            // Delega al comando find di sistema
-            const std::string cmd = "find . -path '" + it->second +
-                                    "' 2>&1 | head -200";
-
-            FILE * pipe = popen(cmd.c_str(), "r");
-            if (!pipe) {
-                return {false, "", "Impossibile eseguire find"};
-            }
+            std::string pattern = it->second;
+            auto parts = expand_braces(pattern);
 
             std::string output;
-            char buffer[4096];
-            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                output += buffer;
+            for (const auto & pat : parts) {
+                // Usa find -path per pattern ricorsivi
+                std::string cmd = "find . -path '*" + pat + "*' 2>&1 | head -100";
+                FILE * pipe = popen(cmd.c_str(), "r");
+                if (!pipe) continue;
+
+                char buffer[4096];
+                while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                    output += buffer;
+                    if (output.size() > 16384) break;
+                }
+                pclose(pipe);
             }
-            pclose(pipe);
 
             if (output.empty()) {
-                output = "[nessun file trovato]";
+                output = "[nessun file trovato per: " + pattern + "]";
             }
 
             return {true, output, ""};
@@ -311,8 +353,16 @@ ToolRegistry::ToolRegistry()
 
                     std::string name = entry.path().filename().string();
 
-                    if (fnmatch(pattern.c_str(), name.c_str(), 0) != 0)
-                        continue;
+    // Esplodi pattern con parentesi: *.{h,cpp} -> [*.h, *.cpp]
+    auto patterns = expand_braces(pattern);
+    bool found = false;
+    for (const auto & pat : patterns) {
+        if (fnmatch(pat.c_str(), name.c_str(), 0) == 0) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) continue;
 
                     if (type_filter == "file" && !entry.is_regular_file()) continue;
                     if (type_filter == "directory" && !entry.is_directory()) continue;
@@ -707,8 +757,6 @@ bool ToolRegistry::parse_tool_call(
 
 std::string ToolRegistry::extract_json_block(const std::string & text) const
 {
-    // Cerca un blocco JSON nel testo
-
     // Prima prova: ```json ... ```
     std::regex json_block_regex("```json\\s*([\\s\\S]*?)```");
     std::smatch match;
@@ -716,27 +764,63 @@ std::string ToolRegistry::extract_json_block(const std::string & text) const
         return match[1].str();
     }
 
-    // Seconda prova: {...} (oggetto JSON diretto)
-    // Usa skip_json_string per non contare {} dentro stringhe JSON
-    size_t brace_start = text.find('{');
-    if (brace_start != std::string::npos) {
+    // Seconda prova: {...} oggetto JSON diretto.
+    // Cerca {"tool" o {"function" — non il primo '{' generico,
+    // che potrebbe essere un esempio di codice (es. { x = 10 }).
+    size_t scan_pos = 0;
+    while (scan_pos < text.size()) {
+        size_t brace_start = std::string::npos;
+
+        // Cerca {"tool" o {"function" da scan_pos
+        size_t p1 = text.find("{\"tool\"", scan_pos);
+        size_t p2 = text.find("{\"function\"", scan_pos);
+        size_t p3 = text.find("{\"tool_call\"", scan_pos);
+
+        if (p1 != std::string::npos) brace_start = p1;
+        if (p2 != std::string::npos && (brace_start == std::string::npos || p2 < brace_start))
+            brace_start = p2;
+        if (p3 != std::string::npos && (brace_start == std::string::npos || p3 < brace_start))
+            brace_start = p3;
+
+        if (brace_start == std::string::npos) break; // nessun tool call JSON trovato
+
+        // Trova il matching '}' partendo da brace_start
+        // skip_json_string per non contare {} dentro stringhe
         int depth = 0;
+        bool has_tool_key = false;
+        bool valid = true;
         for (size_t i = brace_start; i < text.size();) {
             if (text[i] == '"') {
-                i = skip_json_string(text, i);
+                size_t str_end = skip_json_string(text, i);
+                // Verifica se questa stringa matcha "tool" o "function"
+                if (!has_tool_key) {
+                    std::string key = text.substr(i + 1, str_end - i - 2);
+                    if (key == "tool" || key == "function" || key == "tool_call")
+                        has_tool_key = true;
+                }
+                i = str_end;
             } else if (text[i] == '{') {
                 depth++;
                 i++;
             } else if (text[i] == '}') {
                 depth--;
                 if (depth == 0) {
-                    return text.substr(brace_start, i - brace_start + 1);
+                    if (has_tool_key) {
+                        return text.substr(brace_start, i - brace_start + 1);
+                    }
+                    // Questo {...} non contiene "tool"/"function" — salta e continua
+                    scan_pos = i + 1;
+                    valid = false;
+                    break;
                 }
                 i++;
             } else {
                 i++;
             }
         }
+        if (!valid) continue;
+        if (depth != 0) break; // sbilanciato, impossibile completare
+        break; // non dovrebbe succedere
     }
 
     return "";

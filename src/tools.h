@@ -91,6 +91,13 @@ public:
                          std::string & out_name,
                          std::map<std::string, std::string> & out_args);
 
+    /**
+     * Debug: restituisce il blocco JSON estratto (per diagnostica).
+     */
+    std::string extract_json_block_debug(const std::string & text) const {
+        return extract_json_block(text);
+    }
+
 private:
     std::vector<ToolDefinition> tools_;
     std::map<std::string, size_t> tool_index_;  // name → indice in tools_

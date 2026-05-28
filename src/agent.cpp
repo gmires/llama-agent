@@ -560,8 +560,30 @@ void Agent::generate()
     std::string current_response;
     int tool_call_count = 0;
     const int MAX_TOOL_CALLS = 10;
+    bool parse_failed_logged = false; // log solo al primo fallimento per risposta
 
     auto last_stats_time = start_time;
+
+    // Filtro control token nel loop di generazione.
+    // Diversi modelli usano formati diversi: <|channel|> o <|channel>
+    // Filtrati entrambi, più i pattern comuni chatml/mistral/llama.
+    const std::vector<std::string> CONTROL_PATTERNS = {
+        "<|channel|>", "<|channel>",
+        "<|system|>", "<|system>",
+        "<|user|>", "<|user>",
+        "<|assistant|>", "<|assistant>",
+        "<|im_start|>", "<|im_end|>", "<|end_of_turn|>",
+        "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"
+    };
+
+    auto filter_controls = [&](std::string & text) {
+        for (const auto & pat : CONTROL_PATTERNS) {
+            size_t pos = 0;
+            while ((pos = text.find(pat, pos)) != std::string::npos) {
+                text.erase(pos, pat.size());
+            }
+        }
+    };
 
     for (int i = 0; i < max_tokens; i++) {
         if (interrupted_) break;
@@ -579,6 +601,11 @@ void Agent::generate()
 
         // Classifica thinking/response
         TokenType type = reasoning_.classify(piece);
+
+        // Filtra control token
+        filter_controls(piece);
+        // Nota: anche se piece è vuota dopo il filtro, dobbiamo comunque
+        // chiamare stream_.push e llama_decode per mantenere lo stato del modello
 
         // Stream alla UI
         stream_.push(piece, type);
@@ -612,7 +639,15 @@ void Agent::generate()
 
                 handle_tool_call(tool_name, tool_args);
                 current_response.clear();
+                parse_failed_logged = false; // reset per prossimo tool call
                 continue;
+            }
+            // Log diagnostico al primo fallimento
+            if (!parse_failed_logged && current_response.size() > 200) {
+                parse_failed_logged = true;
+                std::string block = tools_->extract_json_block_debug(current_response);
+                fprintf(stderr, "\033[33m[Agent] Tool call JSON non valido. Blocco estratto (%zu bytes):\n%.200s\033[0m\n",
+                        block.size(), block.c_str());
             }
         }
 

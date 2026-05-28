@@ -113,97 +113,85 @@ struct FTXUI::Impl {
     Element render_msg(const ChatMsg & msg) const {
         switch (msg.type) {
         case MsgType::USER:
-            return hbox(Elements{
-                text(" ") | size(WIDTH, EQUAL, 1),
-                text(msg.text) | bold | color(Color::GreenLight),
-            });
+            return paragraph(" \u276F " + msg.text)
+                | bold | color(Color::GreenLight);
 
         case MsgType::ASSISTANT: {
-            // Split per linee e generazione inline code block / heading
-            Elements lines;
+            Elements blocks;
             std::istringstream ss(msg.text);
             std::string line;
-            bool in_block = false;
+            std::string block_buf;
+            bool in_code = false;
             while (std::getline(ss, line)) {
                 while (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.size() >= 3 && line.substr(0, 3) == "```") {
-                    in_block = !in_block;
-                    lines.push_back(in_block
-                        ? text(" \u250C\u2500") | dim | color(Color::GrayDark)
-                        : text(" \u2514\u2500") | dim | color(Color::GrayDark));
-                } else if (in_block) {
-                    lines.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text(line) | color(Color::CyanLight) | bgcolor(Color::Grey19),
-                    }));
+                    if (in_code) {
+                        blocks.push_back(
+                            paragraph(" " + block_buf)
+                                | color(Color::CyanLight) | bgcolor(Color::Grey19));
+                        block_buf.clear();
+                        in_code = false;
+                    } else {
+                        if (!block_buf.empty()) {
+                            blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                            block_buf.clear();
+                        }
+                        in_code = true;
+                    }
+                } else if (in_code) {
+                    block_buf += (block_buf.empty() ? "" : "\n") + line;
                 } else if (!line.empty() && line[0] == '#' && line.size() > 1 && line[1] == '#') {
-                    lines.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text(line) | bold | color(Color::YellowLight),
-                    }));
+                    blocks.push_back(paragraph(" " + line) | bold | color(Color::YellowLight));
                 } else if (!line.empty() && line[0] == '#') {
-                    lines.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text(line) | bold | color(Color::Yellow),
-                    }));
+                    blocks.push_back(paragraph(" " + line) | bold | color(Color::Yellow));
                 } else {
-                    lines.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text(line) | color(Color::White),
-                    }));
+                    if (!line.empty()) {
+                        block_buf += (block_buf.empty() ? "" : "\n") + line;
+                    } else {
+                        if (!block_buf.empty()) {
+                            blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                            block_buf.clear();
+                        }
+                        blocks.push_back(text(""));
+                    }
                 }
             }
-            return vbox(lines);
+            if (!block_buf.empty()) {
+                if (in_code)
+                    blocks.push_back(paragraph(" " + block_buf) | color(Color::CyanLight) | bgcolor(Color::Grey19));
+                else
+                    blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+            }
+            return vbox(blocks);
         }
 
         case MsgType::THINKING: {
+            Elements blocks;
             if (thinking_collapsed) {
-                return hbox(Elements{
-                    text(" ") | size(WIDTH, EQUAL, 1),
-                    text("\u25B6 Thinking") | dim | color(Color::Yellow),
-                    text("  [T per espandere]") | dim | color(Color::GrayDark),
-                });
+                blocks.push_back(text(" \u25B6 Thinking  [T per espandere]") | dim | color(Color::Yellow));
+            } else {
+                blocks.push_back(text(" \u25BC Thinking  [T per comprimere]") | dim | color(Color::Yellow));
+                blocks.push_back(paragraph("   " + msg.text) | color(Color::YellowLight) | dim);
             }
-            return vbox(Elements{
-                hbox(Elements{
-                    text(" ") | size(WIDTH, EQUAL, 1),
-                    text("\u25BC Thinking") | dim | color(Color::Yellow),
-                    text("  [T per comprimere]") | dim | color(Color::GrayDark),
-                }),
-                hbox(Elements{
-                    text(" ") | size(WIDTH, EQUAL, 3),
-                    paragraph(msg.text) | color(Color::YellowLight) | dim,
-                }),
-            });
+            return vbox(blocks);
         }
 
         case MsgType::TOOL_CALL: {
             std::string title = msg.text.empty()
                 ? " Tool: " + msg.extra + " "
                 : " Tool: " + msg.extra + " (" + truncate(msg.text, 60) + ") ";
-            return hbox(Elements{
-                text(" ") | size(WIDTH, EQUAL, 1),
-                text("\u25B8 ") | bold | color(Color::Blue),
-                text(title) | bold | color(Color::BlueLight),
-            });
+            return text(" \u25B8" + title) | bold | color(Color::BlueLight);
         }
 
-        case MsgType::TOOL_RESULT: {
-            return hbox(Elements{
-                text(" ") | size(WIDTH, EQUAL, 3),
-                text("\u2502 ") | color(Color::BlueLight) | dim,
-                paragraph(msg.text) | color(Color::BlueLight) | dim,
-            });
-        }
+        case MsgType::TOOL_RESULT:
+            return paragraph("   \u2502 " + msg.text)
+                | color(Color::BlueLight) | dim;
 
         case MsgType::SYSTEM:
-            return hbox(Elements{
-                text(" ") | size(WIDTH, EQUAL, 1),
-                text(msg.text) | dim | color(Color::GrayDark),
-            });
+            return paragraph(" " + msg.text) | dim | color(Color::GrayDark);
 
         default:
-            return text(msg.text) | color(Color::White);
+            return paragraph(msg.text) | color(Color::White);
         }
     }
 
@@ -281,52 +269,60 @@ struct FTXUI::Impl {
             // Thinking in corso
             if (!thinking_text.empty()) {
                 if (thinking_collapsed) {
-                    content_elems.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text("\u25B6 Thinking...") | dim | color(Color::Yellow),
-                        text("  [T]") | dim | color(Color::GrayDark),
-                    }));
+                    content_elems.push_back(
+                        text(" \u25B6 Thinking...  [T]") | dim | color(Color::Yellow));
                 } else {
-                    content_elems.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 1),
-                        text("\u25BC Thinking") | dim | color(Color::Yellow),
-                        text("  [T]") | dim | color(Color::GrayDark),
-                    }));
-                    content_elems.push_back(hbox(Elements{
-                        text(" ") | size(WIDTH, EQUAL, 3),
-                        paragraph(thinking_text) | color(Color::YellowLight) | dim,
-                    }));
+                    content_elems.push_back(
+                        text(" \u25BC Thinking  [T]") | dim | color(Color::Yellow));
+                    content_elems.push_back(
+                        paragraph("   " + thinking_text) | color(Color::YellowLight) | dim);
                 }
                 content_elems.push_back(text(""));
             }
 
             // Response in corso
             if (!response_text.empty()) {
-                // Split per code block inline
-                Elements resp_lines;
+                Elements resp_blocks;
                 std::istringstream ss(response_text);
                 std::string line;
-                bool in_block = false;
+                std::string block_buf;
+                bool in_code = false;
                 while (std::getline(ss, line)) {
                     while (!line.empty() && line.back() == '\r') line.pop_back();
                     if (line.size() >= 3 && line.substr(0, 3) == "```") {
-                        in_block = !in_block;
-                        resp_lines.push_back(in_block
-                            ? text(" \u250C\u2500") | dim | color(Color::GrayDark)
-                            : text(" \u2514\u2500") | dim | color(Color::GrayDark));
-                    } else if (in_block) {
-                        resp_lines.push_back(hbox(Elements{
-                            text(" ") | size(WIDTH, EQUAL, 1),
-                            text(line) | color(Color::CyanLight) | bgcolor(Color::Grey19),
-                        }));
+                        if (in_code) {
+                            resp_blocks.push_back(
+                                paragraph(" " + block_buf) | color(Color::CyanLight) | bgcolor(Color::Grey19));
+                            block_buf.clear();
+                            in_code = false;
+                        } else {
+                            if (!block_buf.empty()) {
+                                resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                                block_buf.clear();
+                            }
+                            in_code = true;
+                        }
+                    } else if (in_code) {
+                        block_buf += (block_buf.empty() ? "" : "\n") + line;
                     } else {
-                        resp_lines.push_back(hbox(Elements{
-                            text(" ") | size(WIDTH, EQUAL, 1),
-                            text(line) | color(Color::White),
-                        }));
+                        if (!line.empty()) {
+                            block_buf += (block_buf.empty() ? "" : "\n") + line;
+                        } else {
+                            if (!block_buf.empty()) {
+                                resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                                block_buf.clear();
+                            }
+                            resp_blocks.push_back(text(""));
+                        }
                     }
                 }
-                content_elems.push_back(vbox(resp_lines));
+                if (!block_buf.empty()) {
+                    if (in_code)
+                        resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::CyanLight) | bgcolor(Color::Grey19));
+                    else
+                        resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                }
+                content_elems.push_back(vbox(resp_blocks));
                 content_elems.push_back(text(""));
             }
 
@@ -335,15 +331,9 @@ struct FTXUI::Impl {
             int ilines = 1 + (int)std::count(input_text.begin(), input_text.end(), '\n');
             ilines = std::min(8, std::max(3, ilines));
 
-            Element input_area = vbox(Elements{
-                hbox(Elements{
-                    text(" ") | size(WIDTH, EQUAL, 1),
-                    text("\u276F ") | bold | color(Color::Green),
-                    paragraph(disp)
-                        | color(input_text.empty() ? Color::GrayDark : Color::White)
-                        | flex,
-                }),
-            }) | borderEmpty | size(HEIGHT, LESS_THAN, ilines + 1);
+            Element input_area = paragraph(" \u276F " + disp)
+                | color(input_text.empty() ? Color::GrayDark : Color::White)
+                | borderEmpty | size(HEIGHT, LESS_THAN, ilines + 1);
 
             // --- Hint comandi ---
             Element hint = emptyElement();
@@ -363,11 +353,14 @@ struct FTXUI::Impl {
                 text("PgUp/PgDn/Home/End  T=thinking") | dim | color(Color::GrayDark),
             }) | bgcolor(Color::Grey15);
 
-            // --- Content area con scroll ---
+            // --- Content area con scroll solo verticale ---
             if (generating) scroll_y = 1.0f;
-            Element content_area = vbox(content_elems)
+            int term_w = std::max(80, screen.dimx());
+            Element content = vbox(content_elems)
+                | size(WIDTH, LESS_THAN, term_w - 2);
+            Element content_area = content
                 | focusPositionRelative(0.0f, scroll_y)
-                | frame | flex;
+                | yframe | flex;
 
             // --- Layout completo ---
             Element doc = vbox(Elements{
