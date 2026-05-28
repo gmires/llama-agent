@@ -416,8 +416,9 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // T: toggle thinking collapse
-            if (event.is_character() && event.character() == "t" && !generating) {
+            // T: toggle thinking collapse (solo input vuoto, non durante digitazione)
+            if (event.is_character() && event.character() == "t"
+                && !generating && input_text.empty()) {
                 thinking_collapsed = !thinking_collapsed;
                 return true;
             }
