@@ -306,6 +306,7 @@ void Agent::process_prompt_sync(const std::string & prompt)
             prompt.c_str(), n_past_, (size_t)turn_count_, (void*)ctx_);
 
     done_called_ = false;
+    interrupted_ = false;
 
     // Helper: mostra output comandi slash nella UI senza venire sovrascritto
     auto show_cmd = [this](const std::string & text) {
@@ -800,12 +801,11 @@ void Agent::generate()
         });
     }
 
-    int max_tokens = params_.n_predict > 0 ? params_.n_predict : 2048;
+    int max_tokens = params_.n_predict > 0 ? params_.n_predict : 8192;
     auto start_time = std::chrono::high_resolution_clock::now();
 
     std::string current_response;
     int tool_call_count = 0;
-    const int MAX_TOOL_CALLS = 10;
     bool parse_failed_logged = false; // log solo al primo fallimento per risposta
 
     auto last_stats_time = start_time;
@@ -881,7 +881,11 @@ void Agent::generate()
             std::map<std::string, std::string> tool_args;
             if (tools_->parse_tool_call(current_response, tool_name, tool_args)) {
                 tool_call_count++;
-                if (tool_call_count > MAX_TOOL_CALLS) break;
+                // Safety net: se limite > 0 e superato, esci con grazia
+                if (tool_limit_ > 0 && tool_call_count > tool_limit_) {
+                    current_response.clear();
+                    break;
+                }
 
                 handle_tool_call(tool_name, tool_args);
                 current_response.clear();

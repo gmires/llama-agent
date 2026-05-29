@@ -18,6 +18,8 @@
  */
 using PromptCallback = std::function<void(const std::string &)>;
 
+using AbortCallback = std::function<void()>;
+
 /**
  * Interfaccia utente principale.
  *
@@ -57,6 +59,7 @@ public:
      * Imposta il callback per quando l'utente invia un prompt.
      */
     virtual void set_prompt_callback(PromptCallback cb);
+    virtual void set_abort_callback(AbortCallback cb);
 
     /**
      * Mostra un messaggio di errore all'utente.
@@ -111,6 +114,7 @@ public:
 
 protected:
     PromptCallback prompt_callback_;
+    AbortCallback abort_callback_;
     std::atomic<bool> running_{false};
     bool simple_mode_ = false;
     std::string initial_prompt_;  // prompt da -p (--single-turn)
@@ -137,6 +141,7 @@ public:
 
     void init(bool use_simple) override;
     void set_prompt_callback(PromptCallback cb) override;
+    void set_abort_callback(AbortCallback cb) override;
     void run() override;
     void stop() override;
     void stream_token(const std::string & text, TokenType type) override;

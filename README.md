@@ -69,7 +69,7 @@ GGML_BLAS_VENDOR=MKL
 | `--simple-ui` | off | Interfaccia testuale semplice (senza FTXUI) |
 | `--no-cache` | off | Disabilita cache persistente su disco |
 | `--cache-mode` | `fast` | Modalità cache: `fast` (stato binario, ms) o `token` (solo token, prefill) |
-| `--tool-limit N` | `10` | Numero massimo di tool call per turno |
+| `--tool-limit N` | `0` | Limite tool call per turno (0 = illimitato) |
 | `--single-turn` | off | Elabora il prompt `-p` ed esce (modalità non interattiva) |
 
 Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/examples/main/README.md) sono supportati:
@@ -94,10 +94,16 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 |-------|--------|
 | `Enter` | Invia messaggio |
 | `Ctrl+Enter` / `Ctrl+J` | Nuova riga nell'input |
-| `PgUp` / `PgDn` | Scroll cronologia (30% per volta) |
-| `Home` / `End` | Inizio/fine cronologia |
+| `←` / `→` | Muovi cursore nell'input |
+| `Ctrl+A` / `Ctrl+E` | Inizio/fine riga |
+| `Ctrl+W` | Cancella parola |
+| `Delete` | Cancella carattere a destra |
+| `Tab` | Autocompletamento percorso file |
+| `PgUp` / `PgDn` | Scroll cronologia (o rotella mouse) |
+| `Home` / `End` | Inizio/fine input (se testo) o scroll estremi |
 | `Su` / `Giù` | Cronologia prompt precedenti |
-| `T` | Comprimi/espandi blocchi Thinking (▼ / ▶)
+| `Ctrl+T` | Comprimi/espandi blocchi Thinking |
+| `Esc` | Interrompe la generazione in corso |
 
 ---
 
@@ -243,11 +249,13 @@ Interfaccia moderna con messaggi strutturati ispirata a pi:
 
 - **Messaggi strutturati**: ogni messaggio ha un tipo (USER, ASSISTANT, THINKING, TOOL_CALL, TOOL_RESULT, SYSTEM) e uno stile visivo distinto
 - **Tool call a blocchi**: `▸ Tool: write (path="...", ...)` in blu bold, risultato `│ OK: 523 bytes` in blu dim
-- **Thinking collassabile**: `▼ Thinking` / `▶ Thinking` con toggle tasto `T`
+- **Thinking collassabile**: `▼ Thinking` / `▶ Thinking` con toggle `Ctrl+T`
 - **Code block**: ` ``` ` blocchi con sfondo grigio e testo cyan
-- **Colori per ruolo**: utente in verde bold `❯`, assistant in bianco, heading in giallo, sistema in grigio dim
-- **Input area**: prompt `❯ ` verde, supporto multilinea, hint comandi slash
-- **Footer**: token generati, T/s, contesto (n_past/n_ctx), hint tasti (PgUp/PgDn/Home/End, T=thinking)
+- **Colori per ruolo**: utente in verde bold `❯`, assistant in bianco, heading in giallo, sistema con sfondo grigio
+- **Input area**: prompt `❯ ` verde, cursore visibile (reverse video), supporto multilinea, hint comandi slash
+- **Tab completion**: autocompletamento percorsi file nel filesystem
+- **Footer**: token generati, T/s, contesto (n_past/n_ctx), hint tasti (←→ cursore, Tab=completa, Ctrl+T=thinking)
+- **Scroll**: PgUp/PgDn/Home/End + rotella mouse
 - **Spinner**: `|/-\` animato durante la generazione
 - **Overlay permessi**: finestra modale centrata per conferma tool (y/n/a)
 - **Watchdog**: reset automatico dopo 15 minuti di generazione bloccata
@@ -265,15 +273,10 @@ src/
 ├── main.cpp           — Entry point, CLI parsing, filter_agent_args
 ├── agent.h / .cpp     — Agent core: init, eval_prompt, generate, handle_tool_call
 ├── kvcache.h / .cpp   — Persistenza KVCache: token/state save/load, CacheMode
-├── tools.h / .cpp     — Tool calling: 7 tools, JSON parsing, ToolRegistry
-├── ui.h / .cpp        — UI base class + SimpleUI (ANSI console)
-├── ui_ftxui.cpp       — FTXUI TUI: split pane, scroll, colori, permessi overlay
-├── permissions.h/.cpp — Sistema permessi gerarchico (globale, per-tool, per-pattern)
-├── reasoning.h/.cpp   — Rilevamento thinking/response (tag + euristiche)
-└── streaming.h/.cpp   — Buffer streaming token thread-safe
+├── tools.h / .cpp     — Tool calling: 19 tools, JSON parsing, ToolRegistry, hooks
 
 toolstest/
-├── test_tools.cpp     — 37 test per il parser JSON tool call
+├── test_tools.cpp     — 104 test (parser, tool exec, hooks, git, task, permissions)
 └── test_token_roundtrip.cpp — Test roundtrip tokenizzazione
 ```
 
@@ -285,7 +288,7 @@ toolstest/
 cd toolstest/build && ./test_tools
 ```
 
-37 parser test passano. Verificano: JSON diretto, markdown code block, stringhe con `{}` e `"`, escape JSON, falsi key-value, key mancanti di caratteri.
+**104 test**: 37 parser JSON, 12 tool execution, 7 hook, 7 git/task, permissions. Verificano: parsing robusto (stringhe con `{}`, escape, falsi key-value), esecuzione tool file-system, git, task CRUD, hook chain, gestione permessi.
 
 ---
 

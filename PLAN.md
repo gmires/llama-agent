@@ -22,17 +22,20 @@
 ### UI
 - [x] FTXUI TUI con messaggi strutturati (6 tipi: USER/ASSISTANT/THINKING/TOOL_CALL/TOOL_RESULT/SYSTEM)
 - [x] Tool call a blocchi: `▸ Tool: name(args)` blu bold, `│ risultato` blu dim
-- [x] Thinking collassabile con toggle tasto `T` (▼/▶)
+- [x] Thinking collassabile con toggle `Ctrl+T` (▼/▶)
 - [x] Scroll PgUp/PgDn/Home/End con `focusPositionRelative`
 - [x] Code block inline (` ``` `) con sfondo grigio e testo cyan
 - [x] Colori per ruolo: utente verde `❯`, assistant bianco, heading giallo, sistema grigio
 - [x] Footer con statistiche + hint tasti
 - [x] Spinner animato durante generazione
 - [x] SimpleUI alternativa (ANSI, --simple-ui)
-- [x] Comandi slash: /help, /clear, /regen, /model, /session, /stats, /exit
+- [x] Cursore visibile con reverse video + movimento (←→, Ctrl+A/E/W)
+- [x] Tab completion percorsi file nel filesystem
+- [x] Scroll mouse wheel
+- [x] Comandi slash: /help, /clear, /regen, /compact, /model, /session, /stats, /exit
 - [x] Supporto --single-turn con -p
 
-### Tool Calling (12 tools)
+### Tool Calling (19 tools)
 - [x] `bash` — comandi shell con timeout configurabile, cattura stderr
 - [x] `read` — lettura file
 - [x] `write` — scrittura file
@@ -44,10 +47,12 @@
 - [x] `rm` — elimina file (protetto da permessi)
 - [x] `mv` — sposta/rinomina file/directory
 - [x] `edit` — sostituisce stringa in file (match unico, più sicuro di write)
-- [x] `web_search` — cerca su DuckDuckGo (titolo, URL, snippet)
+- [x] `web_search` — cerca su DuckDuckGo (POST, titolo/URL/snippet)
+- [x] `git_diff`, `git_log`, `git_status`, `git_branch` — integrazione git
+- [x] `task_create`, `task_list`, `task_update` — task management (`.cache/tasks.json`)
 - [x] Tool call JSON: `{"tool": "...", "args": {...}}` con supporto markdown
 - [x] Tool result injection nel contesto
-- [x] Limite tool call per turno (--tool-limit)
+- [x] Limite tool call per turno (--tool-limit, 0=illimitato, default 0)
 - [x] ToolRegistry con schema JSON per system prompt
 - [x] Hook before/after tool call (path protection + auto-truncation)
 - [x] Test suite: 88 test (37 parser + 12 tool exec + hooks + permissions)
@@ -58,7 +63,7 @@
 - [x] Parsing tool call: scan lineare chiavi fuori dalle stringhe, no falsi match
 - [x] Supporto: key alias (`tool`/`function`/`tool_call`), args alias (`args`/`parameters`/`params`)
 - [x] Brace expansion: `*.{h,cpp}` → `*.h`, `*.cpp` in glob/find
-- [x] 88 test totali (37 parser + 12 tool exec + 7 hook + permissions)
+- [x] 104 test totali (37 parser + 12 tool exec + 7 hook + 4 git + 3 task + permissions)
 
 ### Permessi
 - [x] Sistema gerarchico: globale → per-tool → per-pattern
@@ -154,7 +159,8 @@
 
 ### P3 — Bassa Priorità (nice to have)
 
-- [ ] **TUI miglioramenti**: autocomplete file path, mouse wheel, syntax highlighting
+- [x] **TUI miglioramenti**: autocomplete file path (Tab), mouse wheel scroll, cursore visibile
+- [ ] Syntax highlighting code block
 
 - [ ] **Steering messages**: invia messaggi mentre l'agente lavora
 
@@ -184,7 +190,7 @@ llama-agent/
 │   ├── main.cpp              # Entry point, CLI
 │   ├── agent.h / .cpp        # Core loop, orchestration
 │   ├── kvcache.h / .cpp      # Persistenza KVCache (fast + token mode)
-│   ├── tools.h / .cpp        # ToolRegistry + 7 core tools
+│   ├── tools.h / .cpp        # ToolRegistry + 19 tools + hooks
 │   ├── permissions.h / .cpp  # Sistema permessi gerarchico
 │   ├── sessions/             # NEW: Session tree JSONL
 │   │   ├── session.h / .cpp

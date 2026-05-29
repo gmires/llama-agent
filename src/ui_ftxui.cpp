@@ -88,6 +88,7 @@ struct FTXUI::Impl {
     std::queue<std::pair<std::string, TokenType>> token_queue;
 
     PromptCallback prompt_callback;
+    AbortCallback abort_callback;
     std::atomic<bool> running{false};
     std::atomic<bool> generating{false};
     std::chrono::steady_clock::time_point generating_since;
@@ -171,9 +172,9 @@ struct FTXUI::Impl {
         case MsgType::THINKING: {
             Elements blocks;
             if (thinking_collapsed) {
-                blocks.push_back(text(" \u25B6 Thinking  [T per espandere]") | dim | color(Color::Yellow));
+                blocks.push_back(text(" \u25B6 Thinking  [Ctrl+T per espandere]") | dim | color(Color::Yellow));
             } else {
-                blocks.push_back(text(" \u25BC Thinking  [T per comprimere]") | dim | color(Color::Yellow));
+                blocks.push_back(text(" \u25BC Thinking  [Ctrl+T per comprimere]") | dim | color(Color::Yellow));
                 blocks.push_back(paragraph("   " + msg.text) | color(Color::YellowLight) | dim);
             }
             return vbox(blocks);
@@ -282,10 +283,10 @@ struct FTXUI::Impl {
             if (!thinking_text.empty()) {
                 if (thinking_collapsed) {
                     content_elems.push_back(
-                        text(" \u25B6 Thinking...  [T]") | dim | color(Color::Yellow));
+                        text(" \u25B6 Thinking...  [Ctrl+T]") | dim | color(Color::Yellow));
                 } else {
                     content_elems.push_back(
-                        text(" \u25BC Thinking  [T]") | dim | color(Color::Yellow));
+                        text(" \u25BC Thinking  [Ctrl+T]") | dim | color(Color::Yellow));
                     content_elems.push_back(
                         paragraph("   " + thinking_text) | color(Color::YellowLight) | dim);
                 }
@@ -394,7 +395,7 @@ struct FTXUI::Impl {
                 text(spinner_str) | color(Color::Green) | bold,
                 text(" ") | size(WIDTH, EQUAL, 1),
                 text(footer_text) | color(Color::GrayLight) | flex,
-                text("\u2190\u2192 cursore  Tab=completa  PgUp/Dn=scroll") | dim | color(Color::GrayDark),
+                text("\u2190\u2192 cursore  Tab=completa  Esc=stop  Ctrl+T=think  PgUp/Dn=scroll") | dim | color(Color::GrayDark),
             }) | bgcolor(Color::Grey15);
 
             // --- Content area con scroll solo verticale ---
@@ -435,6 +436,12 @@ struct FTXUI::Impl {
 
         // --- Gestione eventi ---
         auto handler = CatchEvent(renderer, [this](Event event) {
+            // Escape: interrompe la generazione in corso
+            if (event == Event::Escape && generating) {
+                if (abort_callback) abort_callback();
+                return true;
+            }
+
             if (permission_pending) {
                 if (event.is_character()) {
                     std::string ch = event.character();
@@ -452,9 +459,8 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // T: toggle thinking collapse (solo input vuoto, non durante digitazione)
-            if (event.is_character() && event.character() == "t"
-                && !generating && input_text.empty()) {
+            // Ctrl+T: toggle thinking collapse
+            if (event == Event::CtrlT && !generating) {
                 thinking_collapsed = !thinking_collapsed;
                 return true;
             }
@@ -710,6 +716,11 @@ void FTXUI::init(bool) {
 void FTXUI::set_prompt_callback(PromptCallback cb) {
     UI::set_prompt_callback(std::move(cb));
     if (pimpl_) pimpl_->prompt_callback = prompt_callback_;
+}
+
+void FTXUI::set_abort_callback(AbortCallback cb) {
+    UI::set_abort_callback(std::move(cb));
+    if (pimpl_) pimpl_->abort_callback = abort_callback_;
 }
 
 void FTXUI::run() {

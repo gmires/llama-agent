@@ -76,6 +76,11 @@ public:
     void regenerate();
 
     /**
+     * Interrompe la generazione in corso.
+     */
+    void abort() { interrupted_ = true; }
+
+    /**
      * Pulisce la cronologia della conversazione.
      */
     void clear_history();
@@ -99,6 +104,11 @@ public:
      * Imposta la modalitÃ  di cache (fast/token).
      */
     void set_cache_mode(CacheMode mode) { kvcache_->set_mode(mode); }
+
+    /**
+     * Imposta il limite di tool call per turno (0 = illimitato).
+     */
+    void set_tool_limit(int limit) { tool_limit_ = limit; }
 
     /**
      * Notifica che la generazione è terminata (chiamato dal thread di inferenza).
@@ -141,6 +151,9 @@ private:
 
     // Flag per evitare double-save in on_generation_done
     bool done_called_ = false;
+
+    // Limite tool call per turno (0 = illimitato)
+    int tool_limit_ = 0;
 
     // Risultato dell'ultima generazione
     std::string last_response_;

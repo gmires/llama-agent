@@ -585,13 +585,22 @@ ToolRegistry::ToolRegistry()
             if(it_n!=args.end()){try{num=std::stoi(it_n->second);}catch(...){}}
             if(num<1) num=1; if(num>10) num=10;
 
-            // URL-encode semplice per spazi
+            // URL-encode semplice per la query
             std::string q = it_q->second;
-            for(size_t p=0;p<q.size();p++) if(q[p]==' ') q[p]='+';
+            std::string encoded;
+            for (char c : q) {
+                if (c == ' ') encoded += '+';
+                else if (c == '&') encoded += "%26";
+                else if (c == '=') encoded += "%3D";
+                else if (c == '?') encoded += "%3F";
+                else encoded += c;
+            }
 
-            std::string cmd = "curl -sL --max-time 15 "
+            // DDG richiede POST ora (non più GET)
+            std::string cmd = "curl -sL --max-time 15 -X POST "
                 "-H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64)\" "
-                "\"https://html.duckduckgo.com/html?q=" + q + "\" 2>/dev/null";
+                "-d \"q=" + encoded + "\" "
+                "\"https://html.duckduckgo.com/html/\" 2>/dev/null";
             FILE* pipe = popen(cmd.c_str(),"r");
             if(!pipe) return {false,"","Impossibile eseguire curl"};
 

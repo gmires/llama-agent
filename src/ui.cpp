@@ -31,6 +31,11 @@ void UI::set_prompt_callback(PromptCallback cb)
     prompt_callback_ = std::move(cb);
 }
 
+void UI::set_abort_callback(AbortCallback cb)
+{
+    abort_callback_ = std::move(cb);
+}
+
 void UI::init(bool /*use_simple*/)
 {
     // Implementazione base: non fa nulla

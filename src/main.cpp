@@ -123,7 +123,7 @@ int main(int argc, char ** argv)
     // --- Parametri specifici di llama-agent ---
     bool simple_ui = false;
     bool no_cache = false;
-    int  tool_limit = 10;
+    int  tool_limit = 0;   // 0 = illimitato
     std::string cache_mode = "fast";
 
     // --- Parametri comuni (stessi di llama-cli) ---
@@ -201,8 +201,11 @@ int main(int argc, char ** argv)
     // --- Creazione agente ---
     auto agent = std::make_unique<Agent>(params, cache_disabled);
 
-    // Imposta modalitÃ  cache prima di init
+    // Imposta modalità cache prima di init
     agent->set_cache_mode(mode);
+
+    // Imposta limite tool call (0 = illimitato)
+    agent->set_tool_limit(tool_limit);
 
     // --- Inizializzazione agente (carica modello e contesto) ---
     if (!agent->init()) {
@@ -212,6 +215,13 @@ int main(int argc, char ** argv)
 
     // --- Inizializzazione UI ---
     ui->init(simple_ui);
+
+    // Collega callback abort (Escape interrompe la generazione)
+    Agent * raw_agent = agent.get();
+    ui->set_abort_callback([raw_agent]() {
+        raw_agent->abort();
+        fprintf(stderr, "\n[Interrotto] Generazione fermata dall'utente.\n");
+    });
 
     // --- Avvio agente ---
     // L'agente collega il callback dei prompt e avvia il loop della UI
