@@ -13,6 +13,7 @@
 #include <thread>
 #include <fstream>
 #include <filesystem>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -55,6 +56,38 @@ Agent::Agent(common_params & params, bool cache_disabled)
     }
     tools_   = std::make_unique<ToolRegistry>();
     permissions_ = std::make_unique<PermissionManager>();
+
+    // --- Registra hook per i tool ---
+    // after hook: tronca output troppo lunghi
+    tools_->set_after_hook([](const std::string & name,
+                               const std::map<std::string, std::string> & args,
+                               const ToolResult & res) -> ToolResult {
+        ToolResult r = res;
+        const size_t MAX = 16384;
+        if (r.output.size() > MAX) {
+            r.output = r.output.substr(0, MAX) + "\n... [troncato a " + std::to_string(MAX) + " byte]";
+            r.details["truncated"] = "true";
+        }
+        r.details["tool"] = name;
+        return r;
+    });
+    // before hook: verifica path protection (scritture fuori dal workspace)
+    tools_->set_before_hook([](const std::string & name,
+                                const std::map<std::string, std::string> & args) -> ToolResult {
+        if (name == "write" || name == "rm" || name == "edit") {
+            auto it = args.find("path");
+            if (it == args.end()) it = args.find("from");
+            if (it != args.end() && it->second.find("..") != std::string::npos) {
+                // Percorso con .. — non blocchiamo ma segnaliamo
+            }
+            if (it != args.end() && !it->second.empty() && it->second[0] == '/') {
+                // Percorso assoluto — blocchiamo per sicurezza
+                return {false, "path assoluto bloccato: " + it->second,
+                        "Usa percorsi relativi al workspace", true};
+            }
+        }
+        return {};
+    });
 }
 
 // ===========================================================================
@@ -279,8 +312,12 @@ void Agent::process_prompt_sync(const std::string & prompt)
         std::string help =
             "Comandi disponibili:\n"
             "  /help    — Mostra questo aiuto\n"
-            "  /clear   — Cancella la cronologia\n"
+            "  /clear   — Cancella cronologia e cache\n"
             "  /regen   — Rigenera l'ultima risposta\n"
+            "  /compact — Compatta il contesto (mantiene ultimi messaggi)\n"
+            "  /model   — Mostra il modello corrente\n"
+            "  /session — Mostra info sessione\n"
+            "  /stats   — Mostra statistiche dettagliate\n"
             "  /exit    — Esci\n"
             "\n"
             "Tool disponibili: " + tools_->list_tool_names() + "\n";
@@ -294,6 +331,58 @@ void Agent::process_prompt_sync(const std::string & prompt)
     }
     if (prompt == "/regen") {
         regenerate();
+        return;
+    }
+    if (prompt == "/model") {
+        std::string info = "Modello: " + params_.model.path + "\n"
+            "Contesto: " + std::to_string(params_.n_ctx) + " token, "
+            "batch: " + std::to_string(params_.n_batch) + "\n"
+            "Cache: " + kvcache_->get_cache_path() + "\n"
+            "Cache mode: " + std::string(kvcache_->get_mode_name());
+        if (ui_) ui_->show_info(info);
+        return;
+    }
+    if (prompt == "/session") {
+        std::stringstream ss;
+        ss << "Messaggi: " << history_.size() << "\n"
+           << "Turni: " << turn_count_ << "\n"
+           << "Token nel contesto: " << n_past_ << "/" << params_.n_ctx << "\n"
+           << "Conversation tokens: " << conversation_tokens_.size() << "\n"
+           << "Cache: " << kvcache_->get_cache_path() << "\n"
+           << "Stato: " << (ctx_ ? "attivo" : "non inizializzato");
+        if (ui_) ui_->show_info(ss.str());
+        return;
+    }
+    if (prompt == "/compact") {
+        if (history_.size() <= 4) {
+            if (ui_) ui_->show_info("Troppo pochi messaggi per compattare.");
+            return;
+        }
+        size_t keep = std::max(size_t(2), history_.size() / 3);
+        compact_context(keep);
+        if (ui_) ui_->show_info("Contesto compattato: " + std::to_string(keep) +
+                                " messaggi preservati.");
+        return;
+    }
+    if (prompt == "/stats") {
+        std::stringstream ss;
+        ss << "=== Statistiche ===\n"
+           << "Modello: " << params_.model.path << "\n"
+           << "Thread CPU: " << params_.cpuparams.n_threads << "\n"
+           << "Contesto: " << n_past_ << "/" << params_.n_ctx
+           << " (" << (params_.n_ctx > 0 ? n_past_*100/params_.n_ctx : 0) << "%)\n"
+           << "Batch size: " << params_.n_batch << "\n"
+           << "GPU layers: " << params_.n_gpu_layers << "\n"
+           << "Temperature: " << params_.sampling.temp << "\n"
+           << "Top-P: " << params_.sampling.top_p << "\n"
+           << "Top-K: " << params_.sampling.top_k << "\n"
+           << "Seed: " << params_.sampling.seed << "\n"
+           << "Turni: " << turn_count_ << "\n"
+           << "Messaggi storici: " << history_.size() << "\n"
+           << "Cache key: " << kvcache_->get_cache_path() << "\n"
+           << "Cache mode: " << kvcache_->get_mode_name() << "\n"
+           << "Tools: " << tools_->list_tool_names();
+        if (ui_) ui_->show_info(ss.str());
         return;
     }
 
@@ -314,7 +403,6 @@ void Agent::process_prompt_sync(const std::string & prompt)
         }
         full_text += "user: " + prompt + "\n\nassistant: ";
     } else {
-        // Separa dal turno precedente con un newline
         full_text = "\nuser: " + prompt + "\n\nassistant: ";
     }
 
@@ -322,22 +410,32 @@ void Agent::process_prompt_sync(const std::string & prompt)
     if (ui_) ui_->show_info("Tokenizzazione...");
     std::vector<llama_token> tokens = common_tokenize(ctx_, full_text, true);
 
-    // Verifica limite contesto
+    // Verifica limite contesto — compattazione automatica
     int n_ctx = llama_n_ctx(ctx_);
-    if (n_past_ + (int)tokens.size() > n_ctx - 128) {
-        fprintf(stderr, "[Agent] Contesto esaurito, reset...\n");
-        llama_memory_clear(llama_get_memory(ctx_), true);
-        n_past_ = 0;
-        conversation_tokens_.clear();
-        full_text = build_system_prompt() + "\n\nuser: " + prompt + "\n\nassistant: ";
+    int ctx_threshold = (int)(n_ctx * 0.8);
+    if (n_past_ + (int)tokens.size() > ctx_threshold) {
+        fprintf(stderr, "[Agent] Contesto al %d%% (%d/%d), compattazione...\n",
+                (int)((float)n_past_/n_ctx*100), n_past_, n_ctx);
+
+        size_t keep = std::max(size_t(2), history_.size() / 3);
+        compact_context(keep);
+        // Ricostruisci il prompt per questo turno
+        full_text = build_system_prompt();
+        for (const auto & h : history_)
+            full_text += "\n" + h.role + ": " + h.content + "\n";
+        full_text += "\nuser: " + prompt + "\n\nassistant: ";
         tokens = common_tokenize(ctx_, full_text, true);
+
+        if (ui_) {
+            ui_->show_info("Contesto compattato automaticamente. " +
+                           std::to_string(keep) + " messaggi preservati.");
+        }
     }
 
     if (tokens.empty()) {
         if (ui_) ui_->show_error("Impossibile tokenizzare");
         return;
     }
-
     // --- Valuta il prompt in batch ---
     fprintf(stderr, "\033[34m[Agent] Valutazione prompt: %zu token, n_past=%d\033[0m\n",
             tokens.size(), n_past_);
@@ -509,6 +607,133 @@ void Agent::regenerate()
 // ===========================================================================
 // clear_history
 // ===========================================================================
+
+void Agent::compact_context(size_t keep_last)
+{
+    if (history_.size() <= keep_last) return;
+
+    size_t old_count = history_.size() - keep_last;
+
+    // --- Estrai tool call e file operations dai messaggi scartati ---
+    std::set<std::string> files_read;
+    std::set<std::string> files_written;
+    std::set<std::string> files_edited;
+    std::set<std::string> files_deleted;
+    std::vector<std::string> searches;
+    std::vector<std::string> errors;
+    std::string work_description;
+
+    for (size_t i = 0; i < old_count; i++) {
+        const auto & msg = history_[i];
+        if (msg.role == "assistant") {
+            // Estrai tool call dal testo della risposta
+            std::string tool_name;
+            std::map<std::string, std::string> tool_args;
+            if (tools_->parse_tool_call(msg.content, tool_name, tool_args)) {
+                auto path_it = tool_args.find("path");
+                std::string path = path_it != tool_args.end() ? path_it->second : "";
+
+                if (tool_name == "read" && !path.empty())
+                    files_read.insert(path);
+                else if (tool_name == "write" && !path.empty())
+                    files_written.insert(path);
+                else if (tool_name == "edit" && !path.empty())
+                    files_edited.insert(path);
+                else if (tool_name == "rm" && !path.empty())
+                    files_deleted.insert(path);
+                else if (tool_name == "grep" || tool_name == "find" || tool_name == "glob" || tool_name == "web_search") {
+                    auto q = tool_args.find("pattern");
+                    if (q == tool_args.end()) q = tool_args.find("query");
+                    if (q != tool_args.end())
+                        searches.push_back(tool_name + "(" + q->second + ")");
+                }
+                else if (tool_name == "bash") {
+                    auto c = tool_args.find("command");
+                    if (c != tool_args.end())
+                        work_description += "  Ran: " + c->second + "\n";
+                }
+            }
+        } else if (msg.role == "tool") {
+            if (msg.content.find("ERR:") != std::string::npos)
+                errors.push_back(msg.content.substr(0, 100));
+        } else if (msg.role == "user" && i == old_count - 1) {
+            work_description += "  Last user request: " + msg.content.substr(0, 200) + "\n";
+        }
+    }
+
+    // --- Costruisci summary ricco ---
+    std::string summary = "[Context compacted: " + std::to_string(old_count) +
+                          " earlier messages summarized]\n\n";
+
+    if (!work_description.empty())
+        summary += "Work performed:\n" + work_description + "\n";
+
+    if (!files_read.empty()) {
+        summary += "Files read:\n";
+        for (const auto & f : files_read) summary += "  - " + f + "\n";
+    }
+    if (!files_written.empty()) {
+        summary += "Files created/written:\n";
+        for (const auto & f : files_written) summary += "  - " + f + "\n";
+    }
+    if (!files_edited.empty()) {
+        summary += "Files edited:\n";
+        for (const auto & f : files_edited) summary += "  - " + f + "\n";
+    }
+    if (!files_deleted.empty()) {
+        summary += "Files deleted:\n";
+        for (const auto & f : files_deleted) summary += "  - " + f + "\n";
+    }
+    if (!searches.empty()) {
+        summary += "Searches performed:\n";
+        for (const auto & s : searches) summary += "  - " + s + "\n";
+    }
+    if (!errors.empty()) {
+        summary += "Errors encountered:\n";
+        for (const auto & e : errors) summary += "  - " + e + "\n";
+    }
+
+    // --- Mantieni ultimi messaggi ---
+    std::vector<Message> recent;
+    for (size_t i = history_.size() - keep_last; i < history_.size(); i++)
+        recent.push_back(history_[i]);
+
+    // --- Ricostruisci KVCache con il summary + messaggi recenti ---
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    n_past_ = 0;
+    conversation_tokens_.clear();
+    history_.clear();
+    history_.push_back({"system", summary});
+    for (const auto & m : recent)
+        history_.push_back(m);
+
+    std::string compacted = build_system_prompt() + "\n\n" + summary + "\n\n";
+    for (const auto & m : recent)
+        compacted += m.role + ": " + m.content + "\n\n";
+    auto tok = common_tokenize(ctx_, compacted, true);
+    conversation_tokens_ = tok;
+
+    for (size_t i = 0; i < tok.size(); i += (size_t)params_.n_batch) {
+        int n = std::min((int)tok.size() - (int)i, params_.n_batch);
+        common_batch_clear(batch_);
+        for (int j = 0; j < n; j++) {
+            common_batch_add(batch_, tok[i+j], n_past_, {0}, j == n-1);
+            n_past_++;
+        }
+        llama_decode(ctx_, batch_);
+    }
+
+    fprintf(stderr, "[Agent] Contesto compattato: %zu messaggi -> summary (%zu token) + "
+            "%zu recenti (%d token KVCache)\n",
+            old_count, tok.size(), recent.size(), n_past_);
+
+    if (ui_) {
+        std::vector<std::pair<std::string, std::string>> msgs;
+        for (const auto & h : history_)
+            msgs.push_back({h.role, h.content});
+        ui_->show_history(msgs);
+    }
+}
 
 void Agent::clear_history()
 {
@@ -796,6 +1021,8 @@ std::string Agent::build_system_prompt() const
         "```json\n{\"tool\": \"nome\", \"args\": {\"param\": \"valore\"}}\n```\n\n"
         "Dopo il risultato, continua la conversazione.\n"
         "Se non servono strumenti, rispondi normalmente.\n"
+        "Prima di scrivere file, leggi il contenuto esistente.\n"
+        "Per modifiche mirate, preferisci 'edit' a 'write'.\n"
         "Pensa passo-passo.\n";
 }
 

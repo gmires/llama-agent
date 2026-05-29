@@ -340,7 +340,7 @@ struct FTXUI::Impl {
             if (!input_text.empty() && input_text[0] == '/' && !generating) {
                 hint = hbox(Elements{
                     text(" ") | size(WIDTH, EQUAL, 2),
-                    text("/help  /clear  /regen  /exit") | dim | color(Color::GrayDark),
+                    text("/help /clear /regen /compact /model /session /stats /exit") | dim | color(Color::GrayDark),
                 });
             }
 

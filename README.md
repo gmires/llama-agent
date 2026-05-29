@@ -82,6 +82,10 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 | `/help` | Mostra aiuto e tool disponibili |
 | `/clear` | Cancella cronologia e cache |
 | `/regen` | Rigenera ultima risposta |
+| `/compact` | Compatta contesto (preserva ultimi messaggi) |
+| `/model` | Mostra modello e parametri correnti |
+| `/session` | Mostra info sessione (messaggi, token, cache) |
+| `/stats` | Statistiche dettagliate (CPU, GPU, sampling) |
 | `/exit` | Esci |
 
 ### Tasti
@@ -115,17 +119,43 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 - **`"` nelle stringhe**: virgolette escape-aware nei contenuti non troncano il valore
 - **Pattern `chiave: valore`**: scan lineare fuori dalle stringhe — falsi key-value nel contenuto non generano falsi match
 
-### Tool disponibili (7)
+### Tool disponibili (12)
 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
 | `bash` | Esegue comandi shell (2>&1) con timeout configurabile | `command` (obbligatorio), `timeout` (default: 30s) |
 | `read` | Legge file di testo (max 64KB) | `path` |
 | `write` | Scrive/crea file di testo | `path`, `content` |
+| `edit` | Sostituisce stringa in file (match unico) | `path`, `old_string`, `new_string` |
 | `grep` | Cerca pattern regex nei file (ricorsivo) | `pattern`, `path` |
-| `glob` | Trova file per pattern glob (`**/*.cpp`, `*.txt`) | `pattern` |
-| `find` | Ricerca file nativa C++ con `std::filesystem` | `path` (default: `.`), `pattern` (`*.cpp`, `test*`), `type` (file/dir/any), `max_depth` |
-| `fetch` | Scarica URL via curl | `url`, `format` (text/markdown), `timeout` |
+| `glob` | Trova file per pattern glob con brace expansion | `pattern` |
+| `find` | Ricerca file nativa C++ (std::filesystem + fnmatch) | `path`, `pattern`, `type`, `max_depth` |
+| `ls` | Elenca directory (tipo, dimensione, nome) | `path` (default: `.`) |
+| `rm` | Elimina file | `path` |
+| `mv` | Sposta/rinomina file o directory | `from`, `to` |
+| `fetch` | Scarica URL via curl | `url`, `format`, `timeout` |
+| `web_search` | Cerca su DuckDuckGo (titolo, URL, snippet) | `query`, `num` (default: 5) |
+
+### Hook system
+
+Due hook intercettano ogni esecuzione di tool:
+
+- **before hook**: eseguito prima del tool. Può bloccare l'esecuzione (es. path assoluti bloccati per `write`/`rm`/`edit`). Se ritorna `is_error=true`, il tool non viene eseguito.
+- **after hook**: eseguito dopo il tool. Può modificare il risultato, troncare output lunghi (>16KB), aggiungere metadati (`details["tool"]`, `details["truncated"]`).
+
+### Compattazione contesto (Summary Compression)
+
+Quando il contesto raggiunge l'80% della capacità, invece di resettare completamente, l'agente:
+
+1. Scansiona i messaggi scartati con `parse_tool_call` per estrarre tutte le operazioni
+2. Cataloga: file letti, creati, modificati, eliminati, ricerche, errori
+3. Costruisce un summary strutturato con sezioni (`Work performed`, `Files created`, `Searches`, `Errors`)
+4. Preserva gli ultimi ~1/3 dei messaggi
+5. Ricostruisce la KVCache con system prompt + summary + messaggi recenti
+
+Il modello conserva così il contesto di ciò che ha fatto senza perdere traccia dei file e delle decisioni prese.
+
+Comando manuale: `/compact` forza la compattazione immediata.
 
 ### Esempio di sessione
 

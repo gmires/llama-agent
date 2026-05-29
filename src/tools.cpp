@@ -176,7 +176,7 @@ ToolRegistry::ToolRegistry()
                 content += "\n... [file troncato a " + std::to_string(MAX_CONTENT) + " bytes]";
             }
 
-            return {true, content, ""};
+            return {true, content, "", false, {{"file_size", std::to_string(content.size())}}};
         }
     });
 
@@ -447,6 +447,219 @@ ToolRegistry::ToolRegistry()
             return {true, output, ""};
         }
     });
+
+    // --- Tool: ls ---
+    register_tool({
+        "ls",
+        "Elenca file e directory in una cartella. Per ogni voce mostra: "
+        "tipo (d/-), dimensione, nome. Utile per esplorare il filesystem.",
+        {
+            {"path", "string", "Directory da elencare (default: .)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            std::string path = ".";
+            auto it = args.find("path");
+            if (it != args.end()) path = it->second;
+            if (!fs::exists(path) || !fs::is_directory(path))
+                return {false, "", "Directory non trovata: " + path};
+            std::string output;
+            int count = 0;
+            try {
+                for (const auto & e : fs::directory_iterator(path,
+                         fs::directory_options::skip_permission_denied)) {
+                    std::string n = e.path().filename().string();
+                    std::string t = e.is_directory() ? "d" : "-";
+                    std::string s = "-";
+                    if (e.is_regular_file()) {
+                        auto sz = e.file_size();
+                        if (sz>1024*1024) s=std::to_string(sz/(1024*1024))+"M";
+                        else if (sz>1024) s=std::to_string(sz/1024)+"K";
+                        else s=std::to_string(sz)+"B";
+                    }
+                    char buf[256];
+                    snprintf(buf,sizeof(buf),"%s %6s  %s", t.c_str(), s.c_str(), n.c_str());
+                    output += buf; output += "\n";
+                    if (++count>=200){output+="... [truncated]\n";break;}
+                    if (output.size()>8192){output+="... [truncated]\n";break;}
+                }
+            } catch(const std::exception& e){
+                return {false,"","Errore: "+std::string(e.what())};
+            }
+            if (output.empty()) output="[directory vuota]";
+            return {true, output, ""};
+        }
+    });
+
+    // --- Tool: rm ---
+    register_tool({
+        "rm",
+        "Elimina un file. ATTENZIONE: operazione irreversibile. "
+        "Non elimina directory non vuote.",
+        {
+            {"path", "string", "File da eliminare", true}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it=args.find("path");
+            if(it==args.end()) return {false,"","Parametro 'path' mancante"};
+            if(!fs::exists(it->second))
+                return {false,"","File non trovato: "+it->second};
+            if(fs::is_directory(it->second)&&!fs::is_empty(it->second))
+                return {false,"","Directory non vuota: "+it->second};
+            std::error_code ec;
+            fs::remove(it->second,ec);
+            if(ec) return {false,"","Errore: "+ec.message()};
+            return {true,"Eliminato: "+it->second,""};
+        }
+    });
+
+    // --- Tool: mv ---
+    register_tool({
+        "mv",
+        "Sposta o rinomina un file/directory.",
+        {
+            {"from", "string", "Percorso sorgente", true},
+            {"to",   "string", "Percorso destinazione", true}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it_from=args.find("from"), it_to=args.find("to");
+            if(it_from==args.end()) return {false,"","'from' mancante"};
+            if(it_to==args.end())   return {false,"","'to' mancante"};
+            if(!fs::exists(it_from->second))
+                return {false,"","File non trovato: "+it_from->second};
+            std::error_code ec;
+            fs::rename(it_from->second,it_to->second,ec);
+            if(ec) return {false,"","Spostamento fallito: "+ec.message()};
+            return {true,it_from->second+" -> "+it_to->second,""};
+        }
+    });
+
+    // --- Tool: edit ---
+    register_tool({
+        "edit",
+        "Sostituisce una stringa in un file. La vecchia stringa deve apparire "
+        "ESATTAMENTE UNA VOLTA nel file. Usa per modifiche mirate senza "
+        "riscrivere tutto il file.",
+        {
+            {"path",       "string", "File da modificare", true},
+            {"old_string", "string", "Testo da sostituire (deve essere unico)", true},
+            {"new_string", "string", "Nuovo testo da inserire", true}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it_p=args.find("path"),it_o=args.find("old_string"),it_n=args.find("new_string");
+            if(it_p==args.end()) return {false,"","'path' mancante"};
+            if(it_o==args.end()) return {false,"","'old_string' mancante"};
+            if(it_n==args.end()) return {false,"","'new_string' mancante"};
+            std::ifstream in(it_p->second);
+            if(!in.is_open()) return {false,"","Impossibile leggere: "+it_p->second};
+            std::stringstream buf; buf<<in.rdbuf(); in.close();
+            std::string c=buf.str(), o=it_o->second, n=it_n->second;
+            size_t p=c.find(o);
+            if(p==std::string::npos)
+                return {false,"","Stringa non trovata nel file: "+o.substr(0,60)};
+            if(c.find(o,p+1)!=std::string::npos)
+                return {false,"","Stringa trovata piu' di una volta."};
+            c.replace(p,o.size(),n);
+            std::ofstream out(it_p->second);
+            if(!out.is_open()) return {false,"","Impossibile scrivere: "+it_p->second};
+            out<<c; out.close();
+            return {true,"Modificato: "+it_p->second+" ("+
+                     std::to_string(o.size())+"->"+std::to_string(n.size())+" byte)",""};
+        }
+    });
+
+    // --- Tool: web_search ---
+    register_tool({
+        "web_search",
+        "Cerca su DuckDuckGo e restituisce titoli, URL e snippet dei risultati. "
+        "Utile per trovare informazioni aggiornate, documentazione, esempi di codice.",
+        {
+            {"query",    "string", "Query di ricerca", true},
+            {"num",      "number", "Numero risultati (default: 5, max: 10)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it_q = args.find("query");
+            if(it_q==args.end()) return {false,"","Parametro 'query' mancante"};
+            int num = 5;
+            auto it_n = args.find("num");
+            if(it_n!=args.end()){try{num=std::stoi(it_n->second);}catch(...){}}
+            if(num<1) num=1; if(num>10) num=10;
+
+            // URL-encode semplice per spazi
+            std::string q = it_q->second;
+            for(size_t p=0;p<q.size();p++) if(q[p]==' ') q[p]='+';
+
+            std::string cmd = "curl -sL --max-time 15 "
+                "-H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64)\" "
+                "\"https://html.duckduckgo.com/html?q=" + q + "\" 2>/dev/null";
+            FILE* pipe = popen(cmd.c_str(),"r");
+            if(!pipe) return {false,"","Impossibile eseguire curl"};
+
+            std::string html;
+            char buf[8192];
+            while(fgets(buf,sizeof(buf),pipe)) html+=buf;
+            pclose(pipe);
+
+            if(html.empty()) return {false,"","Nessuna risposta da DuckDuckGo"};
+
+            // Estrai risultati: <a rel="nofollow" class="result__a" href="URL">TITLE</a>
+            // e <a class="result__snippet">SNIPPET</a>
+            std::string output;
+            int found=0;
+            size_t pos=0;
+            while(found<num && pos<html.size()){
+                size_t link = html.find("class=\"result__a\"",pos);
+                if(link==std::string::npos) break;
+                size_t href_s = html.find("href=\"",link);
+                if(href_s==std::string::npos||href_s>link+200){pos=link+1;continue;}
+                href_s+=6;
+                size_t href_e = html.find("\"",href_s);
+                if(href_e==std::string::npos){pos=link+1;continue;}
+                std::string url = html.substr(href_s,href_e-href_s);
+
+                size_t title_s = html.find(">",href_e);
+                if(title_s==std::string::npos||title_s>href_e+500){pos=link+1;continue;}
+                title_s++;
+                size_t title_e = html.find("</a>",title_s);
+                if(title_e==std::string::npos){pos=link+1;continue;}
+                std::string title = html.substr(title_s,title_e-title_s);
+                // rimuovi tag HTML dal titolo
+                size_t tag;
+                while((tag=title.find('<'))!=std::string::npos){
+                    size_t tag_e=title.find('>',tag);
+                    if(tag_e!=std::string::npos) title.erase(tag,tag_e-tag+1);
+                    else break;
+                }
+
+                // Cerca snippet
+                std::string snippet="";
+                size_t snip = html.find("class=\"result__snippet\"",title_e);
+                if(snip!=std::string::npos&&snip<title_e+2000){
+                    size_t snip_s=html.find(">",snip);
+                    if(snip_s!=std::string::npos){
+                        snip_s++;
+                        size_t snip_e=html.find("</a>",snip_s);
+                        if(snip_e!=std::string::npos&&snip_e<snip_s+2000){
+                            snippet=html.substr(snip_s,snip_e-snip_s);
+                            while((tag=snippet.find('<'))!=std::string::npos){
+                                size_t te=snippet.find('>',tag);
+                                if(te!=std::string::npos) snippet.erase(tag,te-tag+1);
+                                else break;
+                            }
+                        }
+                    }
+                }
+
+                output += std::to_string(found+1)+". "+title+"\n";
+                output += "   "+url+"\n";
+                if(!snippet.empty()) output += "   "+snippet+"\n";
+                output += "\n";
+                found++;
+                pos=title_e;
+            }
+            if(output.empty()) output="[nessun risultato trovato per: "+it_q->second+"]";
+            return {true,output,""};
+        }
+    });
 }
 
 // ===========================================================================
@@ -481,7 +694,7 @@ ToolResult ToolRegistry::execute(
 {
     const ToolDefinition * tool = find(name);
     if (!tool) {
-        return {false, "", "Tool sconosciuto: " + name};
+        return {false, "", "Tool sconosciuto: " + name, true};
     }
 
     // Validazione parametri richiesti
@@ -489,11 +702,37 @@ ToolResult ToolRegistry::execute(
         if (param.required && args.find(param.name) == args.end()) {
             return {false, "",
                     "Parametro richiesto mancante: " + param.name +
-                    " per il tool " + name};
+                    " per il tool " + name, true};
         }
     }
 
-    return tool->executor(args);
+    // before hook
+    if (before_hook_) {
+        auto block = before_hook_(name, args);
+        if (block.is_error) return block;
+    }
+
+    ToolResult result = tool->executor(args);
+
+    // after hook
+    if (after_hook_) {
+        result = after_hook_(name, args, result);
+    }
+
+    return result;
+}
+
+void ToolRegistry::set_before_hook(
+    std::function<ToolResult(const std::string &, const std::map<std::string, std::string> &)> hook)
+{
+    before_hook_ = std::move(hook);
+}
+
+void ToolRegistry::set_after_hook(
+    std::function<ToolResult(const std::string &, const std::map<std::string, std::string> &,
+                              const ToolResult &)> hook)
+{
+    after_hook_ = std::move(hook);
 }
 
 // ===========================================================================

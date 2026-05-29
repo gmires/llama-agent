@@ -183,7 +183,7 @@ static void test_read_tool()
     std::cout << "[Tool: read]\n";
 
     ToolRegistry reg;
-    auto res = reg.execute("read", {{"path", "CMakeLists.txt"}});
+    auto res = reg.execute("read", {{"path", "../../CMakeLists.txt"}});
     CHECK(res.success, "read CMakeLists.txt");
     CHECK(res.output.find("cmake_minimum_required") != std::string::npos, "read content");
 
@@ -198,7 +198,7 @@ static void test_grep_tool()
     std::cout << "[Tool: grep]\n";
 
     ToolRegistry reg;
-    auto res = reg.execute("grep", {{"pattern", "int main"}, {"path", "src"}});
+    auto res = reg.execute("grep", {{"pattern", "int main"}, {"path", "../../src"}});
     CHECK(res.success, "grep success");
     if (res.success) {
         bool found = res.output.find("main.cpp") != std::string::npos;
@@ -207,6 +207,217 @@ static void test_grep_tool()
         }
         CHECK(found, "grep found file");
     }
+
+    std::cout << "  OK\n";
+}
+
+static void test_ls_tool()
+{
+    std::cout << "[Tool: ls]\n";
+
+    ToolRegistry reg;
+    // ls della directory corrente (toolstest/)
+    auto res = reg.execute("ls", {{"path", "."}});
+    CHECK(res.success, "ls success");
+    CHECK(res.output.find("test_tools") != std::string::npos, "ls found test_tools ref");
+    CHECK(!res.output.empty(), "ls has output");
+
+    // ls di path inesistente
+    res = reg.execute("ls", {{"path", "/nonexistent_xyz"}});
+    CHECK(!res.success, "ls nonexistent fails");
+
+    std::cout << "  OK\n";
+}
+
+static void test_rm_tool()
+{
+    std::cout << "[Tool: rm]\n";
+
+    ToolRegistry reg;
+    std::string f = "/tmp/test_agent_rm.txt";
+
+    // Crea file temporaneo
+    { std::ofstream of(f); of << "delete me"; }
+
+    auto res = reg.execute("rm", {{"path", f}});
+    CHECK(res.success, "rm success");
+    CHECK(!std::ifstream(f).is_open(), "rm file actually deleted");
+
+    // rm di file inesistente
+    res = reg.execute("rm", {{"path", "/tmp/nonexistent_xyz"}});
+    CHECK(!res.success, "rm nonexistent fails");
+
+    std::cout << "  OK\n";
+}
+
+static void test_mv_tool()
+{
+    std::cout << "[Tool: mv]\n";
+
+    ToolRegistry reg;
+    std::string from = "/tmp/test_agent_mv_src.txt";
+    std::string to   = "/tmp/test_agent_mv_dst.txt";
+
+    // Cleanup
+    std::remove(from.c_str());
+    std::remove(to.c_str());
+
+    // Crea file sorgente
+    { std::ofstream of(from); of << "rename me"; }
+
+    auto res = reg.execute("mv", {{"from", from}, {"to", to}});
+    CHECK(res.success, "mv success");
+    CHECK(!std::ifstream(from).is_open(), "mv source gone");
+    CHECK(std::ifstream(to).is_open(), "mv dest exists");
+
+    std::remove(to.c_str());
+
+    // mv di file inesistente
+    res = reg.execute("mv", {{"from", "/tmp/nonexistent_xyz"}, {"to", "/tmp/dst"}});
+    CHECK(!res.success, "mv nonexistent fails");
+
+    std::cout << "  OK\n";
+}
+
+static void test_edit_tool()
+{
+    std::cout << "[Tool: edit]\n";
+
+    ToolRegistry reg;
+    std::string f = "/tmp/test_agent_edit.txt";
+    std::string orig = "Hello World\nThis is a test\nGoodbye\n";
+
+    { std::ofstream of(f); of << orig; }
+
+    // Sostituzione unica
+    auto res = reg.execute("edit", {{"path", f}, {"old_string", "World"}, {"new_string", "C++"}});
+    CHECK(res.success, "edit single replace");
+    {
+        std::ifstream in(f);
+        std::string c((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(c.find("Hello C++") != std::string::npos, "edit content changed");
+        CHECK(c.find("World") == std::string::npos, "edit old string gone");
+        CHECK(c.find("This is a test") != std::string::npos, "edit rest untouched");
+    }
+
+    // Sostituzione con match non unico
+    res = reg.execute("edit", {{"path", f}, {"old_string", "is"}, {"new_string", "IS"}});
+    CHECK(!res.success, "edit non-unique fails");
+
+    // Sostituzione non trovata
+    res = reg.execute("edit", {{"path", f}, {"old_string", "xyz_not_found"}, {"new_string", ""}});
+    CHECK(!res.success, "edit not found fails");
+
+    std::remove(f.c_str());
+    std::cout << "  OK\n";
+}
+
+static void test_find_tool()
+{
+    std::cout << "[Tool: find]\n";
+
+    ToolRegistry reg;
+    // Cerca dal toolstest/ (directory padre del build/)
+    auto res = reg.execute("find", {{"pattern", "*.cpp"}, {"path", ".."}});
+    CHECK(res.success, "find success");
+    CHECK(res.output.find("test_tools.cpp") != std::string::npos, "find found test_tools.cpp");
+
+    // find con brace expansion
+    res = reg.execute("find", {{"pattern", "*.{cpp,h}"}, {"path", "../.."}});
+    CHECK(res.success, "find brace expansion success");
+
+    // find con type=file verso la root progetto
+    res = reg.execute("find", {{"pattern", "CMakeLists.txt"}, {"type", "file"}, {"path", "../.."}});
+    CHECK(res.success, "find type=file success");
+
+    std::cout << "  OK\n";
+}
+
+static void test_fetch_tool()
+{
+    std::cout << "[Tool: fetch]\n";
+
+    ToolRegistry reg;
+    // Test con URL che esiste e ritorna qualcosa
+    auto res = reg.execute("fetch", {{"url", "https://example.com"}, {"timeout", "10"}});
+    CHECK(res.success, "fetch example.com");
+    if (res.success) {
+        CHECK(res.output.find("Example Domain") != std::string::npos, "fetch has content");
+    }
+
+    // Test con URL inesistente
+    res = reg.execute("fetch", {{"url", "https://invalid.domain.xyz.nonexistent/test"}, {"timeout", "5"}});
+    // Fetch di un dominio inesistente può dare success=false o output vuoto
+    // Accettiamo entrambi
+
+    std::cout << "  OK\n";
+}
+
+static void test_web_search_tool()
+{
+    std::cout << "[Tool: web_search]\n";
+
+    ToolRegistry reg;
+    auto res = reg.execute("web_search", {{"query", "C++ std::filesystem example"}, {"num", "3"}});
+    // Questo test richiede rete — se fallisce per timeout/rete non è un bug
+    if (res.success) {
+        CHECK(!res.output.empty(), "web_search has results");
+        // Verifica formato output (numerato)
+        CHECK(res.output.find("1.") != std::string::npos, "web_search numbered results");
+    } else {
+        std::cerr << "  (rete non disponibile, test saltato)\n";
+    }
+
+    std::cout << "  OK\n";
+}
+
+static void test_hooks()
+{
+    std::cout << "[Tool Hooks]\n";
+
+    ToolRegistry reg;
+    bool before_called = false;
+    bool after_called = false;
+
+    // Test before hook: blocca rm assoluti
+    reg.set_before_hook([&](const std::string & name,
+                             const std::map<std::string, std::string> &) -> ToolResult {
+        before_called = true;
+        return {};
+    });
+    reg.set_after_hook([&](const std::string & name,
+                            const std::map<std::string, std::string> &,
+                            const ToolResult & r) -> ToolResult {
+        after_called = true;
+        return r;
+    });
+
+    auto res = reg.execute("bash", {{"command", "echo test"}});
+    CHECK(before_called, "before hook called");
+    CHECK(after_called, "after hook called");
+    CHECK(res.success, "hook does not block execution");
+
+    // Test before hook: blocca esplicitamente
+    reg.set_before_hook([&](const std::string & name,
+                             const std::map<std::string, std::string> &) -> ToolResult {
+        return {false, "", "bloccato dal test", true};
+    });
+    res = reg.execute("bash", {{"command", "echo blocked"}});
+    CHECK(!res.success, "before hook blocks");
+    CHECK(res.is_error, "before hook sets is_error");
+
+    // Test dopo hook: modifica risultato
+    reg.set_before_hook({}); // rimuovi blocco precedente
+    reg.set_after_hook([](const std::string & name, const std::map<std::string, std::string> &,
+                           const ToolResult & r) -> ToolResult {
+        auto m = r;
+        m.details["hook_added"] = "yes";
+        m.details["tool"] = name;
+        return m;
+    });
+    res = reg.execute("bash", {{"command", "echo hook_test"}});
+    CHECK(res.details["hook_added"] == "yes", "after hook added detail");
+    CHECK(res.details["tool"] == "bash", "after hook adds tool name");
 
     std::cout << "  OK\n";
 }
@@ -244,6 +455,14 @@ int main()
     test_glob_tool();
     test_read_tool();
     test_grep_tool();
+    test_ls_tool();
+    test_rm_tool();
+    test_mv_tool();
+    test_edit_tool();
+    test_find_tool();
+    test_fetch_tool();
+    test_web_search_tool();
+    test_hooks();
     test_permissions();
 
     std::cout << "\n=== " << passed << "/" << tests << " passed ===\n";

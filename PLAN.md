@@ -29,21 +29,28 @@
 - [x] Footer con statistiche + hint tasti
 - [x] Spinner animato durante generazione
 - [x] SimpleUI alternativa (ANSI, --simple-ui)
-- [x] Comandi slash: /help, /clear, /regen, /exit
+- [x] Comandi slash: /help, /clear, /regen, /model, /session, /stats, /exit
 - [x] Supporto --single-turn con -p
 
-### Tool Calling (7 tools)
+### Tool Calling (12 tools)
 - [x] `bash` — comandi shell con timeout configurabile, cattura stderr
 - [x] `read` — lettura file
 - [x] `write` — scrittura file
 - [x] `grep` — ricerca regex ricorsiva
-- [x] `glob` — match pattern file
-- [x] `find` — ricerca file nativa C++ (std::filesystem + fnmatch, max_depth, tipo)
+- [x] `glob` — match pattern file con brace expansion (`*.{h,cpp}`)
+- [x] `find` — ricerca file nativa C++ (std::filesystem + fnmatch, max_depth, brace expansion)
 - [x] `fetch` — download URL
+- [x] `ls` — elenca directory (tipo, dimensione, nome)
+- [x] `rm` — elimina file (protetto da permessi)
+- [x] `mv` — sposta/rinomina file/directory
+- [x] `edit` — sostituisce stringa in file (match unico, più sicuro di write)
+- [x] `web_search` — cerca su DuckDuckGo (titolo, URL, snippet)
 - [x] Tool call JSON: `{"tool": "...", "args": {...}}` con supporto markdown
 - [x] Tool result injection nel contesto
 - [x] Limite tool call per turno (--tool-limit)
 - [x] ToolRegistry con schema JSON per system prompt
+- [x] Hook before/after tool call (path protection + auto-truncation)
+- [x] Test suite: 88 test (37 parser + 12 tool exec + hooks + permissions)
 
 ### JSON Parsing
 - [x] Estrazione JSON block: `skip_json_string()` ignora `{}` dentro stringhe
@@ -106,51 +113,11 @@
 
 ### P1 — Alta Priorità (funzionalità chiave)
 
-- [ ] **Tool: smart edit** (sostituisce write raw):
-  - `edit <file> <"old_string"> <"new_string">` — string replacement con context matching
-  - `edit <file> <start_line> <end_line> <"new_content">` — line-based editing
-  - Verifica pre-edit: il file esiste, old_string è unico
-  - Diff preview prima dell'applicazione
-  - Rollback automatico se la modifica rompe la compilazione (opzionale)
-
-- [ ] **Tool result strutturato**:
-  ```cpp
-  struct ToolResult {
-      bool success;
-      bool is_error = false;          // esplicito: errore del tool
-      std::string content;            // per il LLM
-      std::map<std::string, std::string> details;  // metadati (file_size, match_count, ...)
-  };
-  ```
-  - Separa contenuto LLM da metadati
-  - Tool possono troncare output ma mantenere info complete nei details
-
-- [ ] **before_tool_call / after_tool_call hooks**:
-  - `beforeToolCall`: path protection, sandbox, conferma aggiuntiva
-  - `afterToolCall`: filtra output, aggiungi metadati, tronca se troppo lungo
-
-- [ ] **Markdown rendering migliorato**:
-  - Code block syntax highlighting (delega a libreria esterna o regex base per C++/Python/JS)
-  - Link cliccabili
-  - Liste indentate con bullet `•`
-
-- [ ] **Compattazione contesto** (context compaction):
-  - **Problema attuale**: quando `n_past_ + nuovi_token > n_ctx - 128`, il contesto viene resettato completamente (`llama_memory_clear`) — si perde tutta la cronologia
-  - **Soglia compattazione**: trigger a ~80% del contesto (`n_past_ > 0.8 * n_ctx`)
-  - **Strategia**:
-    1. Rileva superamento soglia prima di aggiungere nuovi token
-    2. Separa i messaggi in "vecchi" (primi 60%) e "recenti" (ultimi 40%)
-    3. Genera un riassunto dei messaggi vecchi con una chiamata LLM dedicata:
-       ```
-       "Riassumi questa conversazione in 3-5 frasi, preservando informazioni su file modificati e decisioni prese: ..."
-       ```
-    4. Ricostruisci il prompt: system + `<summary>...</summary>` + messaggi recenti
-    5. Rivaluta il nuovo prompt compresso
-  - **Configurabile**: `--compact-threshold 0.8` (frazione del contesto), `--compact-keep-last N` (messaggi recenti da preservare)
-  - **Comando manuale**: `/compact` per forzare la compattazione immediata
-  - **Compattazione automatica**: abilitata di default, disabilitabile con `--no-compact`
-  - **Salvataggio**: i messaggi originali rimangono in `conversation.json`; il summary è solo per la KVCache corrente
-  - **Riferimento**: simile al `/compact` di pi (lossy, history originale preservata nel file JSONL)
+- [x] **Tool: smart edit** — string replacement con context matching (implementato)
+- [x] **Tool result strutturato** — `is_error`, `details` map per metadati
+- [x] **before_tool_call / after_tool_call hooks** — path protection, truncation, metadati
+- [ ] **Markdown rendering migliorato** — syntax highlighting code block, link cliccabili
+- [x] **Compattazione contesto** — Summary Compression: trigger all'80%, scansiona tool call scartati, preserva file operations/ricerche/errori, `/compact` manuale
 
 ### P2 — Media Priorità (espansione)
 

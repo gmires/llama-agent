@@ -181,6 +181,12 @@ private:
     void handle_tool_call(const std::string & name,
                           const std::map<std::string, std::string> & args);
 
+    /**
+     * Compatta il contesto preservando i tool call e file operations.
+     * keep_last: numero messaggi recenti da preservare.
+     */
+    void compact_context(size_t keep_last);
+
     // --- Persistenza conversazione ---
 
     /**

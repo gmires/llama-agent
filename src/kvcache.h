@@ -28,6 +28,7 @@ public:
     std::string get_state_path() const;
     void set_enabled(bool enabled);
     void set_mode(CacheMode mode);
+    const char * get_mode_name() const { return mode_ == CacheMode::FAST ? "fast" : "token"; }
 
 private:
     std::string cache_dir_;

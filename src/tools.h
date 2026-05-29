@@ -14,6 +14,8 @@ struct ToolResult {
     bool success;
     std::string output;     // Testo prodotto dal tool (stdout, contenuto file, ecc.)
     std::string error;      // Messaggio di errore se success == false
+    bool is_error = false;  // True se il tool ha riportato un errore esplicito
+    std::map<std::string, std::string> details; // Metadati (file_size, match_count, ...)
 };
 
 /**
@@ -67,6 +69,22 @@ public:
                        const std::map<std::string, std::string> & args);
 
     /**
+     * Hook chiamato prima dell'esecuzione di ogni tool.
+     * Se ritorna un ToolResult con is_error=true, il tool NON viene eseguito
+     * e il risultato dell'hook viene usato come risposta.
+     */
+    void set_before_hook(std::function<ToolResult(const std::string & name,
+                           const std::map<std::string, std::string> &)> hook);
+
+    /**
+     * Hook chiamato dopo l'esecuzione di ogni tool.
+     * Può modificare/filtrare il risultato prima che venga restituito al chiamante.
+     */
+    void set_after_hook(std::function<ToolResult(const std::string & name,
+                          const std::map<std::string, std::string> &,
+                          const ToolResult & result)> hook);
+
+    /**
      * Genera la descrizione JSON dei tool per il system prompt.
      * Formato compatibile con OpenAI function calling.
      */
@@ -101,6 +119,12 @@ public:
 private:
     std::vector<ToolDefinition> tools_;
     std::map<std::string, size_t> tool_index_;  // name → indice in tools_
+
+    std::function<ToolResult(const std::string &,
+                              const std::map<std::string, std::string> &)> before_hook_;
+    std::function<ToolResult(const std::string &,
+                              const std::map<std::string, std::string> &,
+                              const ToolResult &)> after_hook_;
 
     /**
      * Cerca un pattern di tool call JSON nel testo.
