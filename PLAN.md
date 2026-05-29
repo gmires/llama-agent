@@ -57,7 +57,8 @@
 - [x] Estrazione valore: escape-aware, non troncata da `"` interne
 - [x] Parsing tool call: scan lineare chiavi fuori dalle stringhe, no falsi match
 - [x] Supporto: key alias (`tool`/`function`/`tool_call`), args alias (`args`/`parameters`/`params`)
-- [x] 37 parser test passano
+- [x] Brace expansion: `*.{h,cpp}` → `*.h`, `*.cpp` in glob/find
+- [x] 88 test totali (37 parser + 12 tool exec + 7 hook + permissions)
 
 ### Permessi
 - [x] Sistema gerarchico: globale → per-tool → per-pattern
@@ -130,27 +131,26 @@
   - Ogni extension può: registrare tool, aggiungere comandi slash, hook sugli eventi
   - Caricamento automatico a startup
 
-- [ ] **Più tool file-system**:
-  - `ls <path>` — lista contenuto directory (colonne: nome, tipo, dimensione)
-  - `tree <path> <max_depth>` — visualizzazione ad albero
+- [x] **Più tool file-system**:
+  - `ls <path>` — lista contenuto directory (colonne: tipo, dimensione, nome)
   - `rm <path>` — elimina file (protetto da permessi)
   - `mv <from> <to>` — sposta/rinomina file
+  - [ ] `tree <path> <max_depth>` — visualizzazione ad albero
 
-- [ ] **Comandi slash estesi**:
+- [x] **Comandi slash estesi**:
   - `/model` — mostra modello corrente
-  - `/session` — mostra info sessione (ID, file, messaggi, token, costo)
-  - `/stats` — statistiche dettagliate (memoria, throughput, latenza)
-  - `/compact` — compatta contesto (riassumi messaggi vecchi, mantieni ultimi N)
+  - `/session` — mostra info sessione (messaggi, token, cache)
+  - `/stats` — statistiche dettagliate (CPU, GPU, sampling, contesto)
+  - `/compact` — compatta contesto con Summary Compression
 
 - [ ] **Multi-provider abstraction**:
   - `class Backend` virtuale: llama.cpp locale + API remote
   - Provider iniziale: OpenAI-compatible API (`--provider openai --api-key ...`)
   - Switch a runtime, stesso flusso di tool calling
 
-- [ ] **Web search tool**:
-  - `web_search <query> [num_results=5]` — via SearXNG self-hosted o API
-  - Config: URL server, API key
-  - Render risultati come contesto strutturato
+- [x] **Web search tool**:
+  - `web_search <query> [num=5]` — via DuckDuckGo HTML (curl + parsing)
+  - Restituisce titolo, URL, snippet per ogni risultato
 
 ### P3 — Bassa Priorità (nice to have)
 
