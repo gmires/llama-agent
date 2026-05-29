@@ -119,22 +119,29 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 - **`"` nelle stringhe**: virgolette escape-aware nei contenuti non troncano il valore
 - **Pattern `chiave: valore`**: scan lineare fuori dalle stringhe — falsi key-value nel contenuto non generano falsi match
 
-### Tool disponibili (12)
+### Tool disponibili (19)
 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
-| `bash` | Esegue comandi shell (2>&1) con timeout configurabile | `command` (obbligatorio), `timeout` (default: 30s) |
+| `bash` | Esegue comandi shell (2>&1) con timeout configurabile | `command`, `timeout` |
 | `read` | Legge file di testo (max 64KB) | `path` |
 | `write` | Scrive/crea file di testo | `path`, `content` |
 | `edit` | Sostituisce stringa in file (match unico) | `path`, `old_string`, `new_string` |
 | `grep` | Cerca pattern regex nei file (ricorsivo) | `pattern`, `path` |
 | `glob` | Trova file per pattern glob con brace expansion | `pattern` |
-| `find` | Ricerca file nativa C++ (std::filesystem + fnmatch) | `path`, `pattern`, `type`, `max_depth` |
-| `ls` | Elenca directory (tipo, dimensione, nome) | `path` (default: `.`) |
+| `find` | Ricerca file nativa C++ (fnmatch + brace expansion) | `path`, `pattern`, `type`, `max_depth` |
+| `ls` | Elenca directory (tipo, dimensione, nome) | `path` |
 | `rm` | Elimina file | `path` |
 | `mv` | Sposta/rinomina file o directory | `from`, `to` |
 | `fetch` | Scarica URL via curl | `url`, `format`, `timeout` |
-| `web_search` | Cerca su DuckDuckGo (titolo, URL, snippet) | `query`, `num` (default: 5) |
+| `web_search` | Cerca su DuckDuckGo (titolo, URL, snippet) | `query`, `num` |
+| `git_diff` | Diff working tree (--stat default) | `stat` |
+| `git_log` | Ultimi commit (--oneline) | `n` (default: 10) |
+| `git_status` | Stato working tree (--short) | — |
+| `git_branch` | Branch locali | — |
+| `task_create` | Crea task in `.cache/tasks.json` | `title`, `description` |
+| `task_list` | Mostra task: `[ ]` todo, `[~]` progress, `[x]` done | — |
+| `task_update` | Aggiorna stato task (todo/in_progress/done) | `id`, `status` |
 
 ### Hook system
 

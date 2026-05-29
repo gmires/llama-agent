@@ -422,6 +422,67 @@ static void test_hooks()
     std::cout << "  OK\n";
 }
 
+static void test_git_tools()
+{
+    std::cout << "[Tool: git_*]\n";
+    ToolRegistry reg;
+
+    auto res = reg.execute("git_status", {});
+    CHECK(res.success, "git_status runs");
+    // git_status potrebbe fallire se non siamo in un repo git — accettiamo entrambi
+
+    res = reg.execute("git_branch", {});
+    CHECK(res.success, "git_branch runs");
+
+    res = reg.execute("git_log", {{"n", "3"}});
+    CHECK(res.success, "git_log runs");
+
+    res = reg.execute("git_diff", {{"stat", "true"}});
+    CHECK(res.success, "git_diff runs");
+
+    std::cout << "  OK\n";
+}
+
+static void test_task_tools()
+{
+    std::cout << "[Tool: task_*]\n";
+    ToolRegistry reg;
+
+    // Pulizia
+    std::remove(".cache/tasks.json");
+
+    auto res = reg.execute("task_create", {{"title", "Fix scrolling bug"}, {"description", "PageUp not working"}});
+    CHECK(res.success, "task_create success");
+    CHECK(res.output.find("#1") != std::string::npos, "task_create got id 1");
+    CHECK(res.output.find("Fix scrolling") != std::string::npos, "task_create title correct");
+
+    res = reg.execute("task_create", {{"title", "Add git tools"}});
+    CHECK(res.success, "task_create 2 success");
+
+    res = reg.execute("task_list", {});
+    CHECK(res.success, "task_list success");
+    CHECK(res.output.find("#1") != std::string::npos, "task_list shows task 1");
+    CHECK(res.output.find("#2") != std::string::npos, "task_list shows task 2");
+
+    res = reg.execute("task_update", {{"id", "1"}, {"status", "in_progress"}});
+    CHECK(res.success, "task_update to in_progress");
+
+    res = reg.execute("task_update", {{"id", "1"}, {"status", "done"}});
+    CHECK(res.success, "task_update to done");
+
+    res = reg.execute("task_list", {});
+    CHECK(res.output.find("[x]") != std::string::npos, "task_list shows done marker");
+
+    res = reg.execute("task_update", {{"id", "99"}, {"status", "done"}});
+    CHECK(!res.success, "task_update nonexistent fails");
+
+    res = reg.execute("task_update", {{"id", "1"}, {"status", "invalid"}});
+    CHECK(!res.success, "task_update invalid status fails");
+
+    std::remove(".cache/tasks.json");
+    std::cout << "  OK\n";
+}
+
 static void test_permissions()
 {
     std::cout << "[PermissionManager]\n";
@@ -463,6 +524,8 @@ int main()
     test_fetch_tool();
     test_web_search_tool();
     test_hooks();
+    test_git_tools();
+    test_task_tools();
     test_permissions();
 
     std::cout << "\n=== " << passed << "/" << tests << " passed ===\n";

@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -658,6 +659,266 @@ ToolRegistry::ToolRegistry()
             }
             if(output.empty()) output="[nessun risultato trovato per: "+it_q->second+"]";
             return {true,output,""};
+        }
+    });
+
+    // --- Tool: git_diff ---
+    register_tool({
+        "git_diff",
+        "Mostra le modifiche non committate (working tree vs HEAD). "
+        "Usa --stat per un riepilogo, senza argomenti per il diff completo.",
+        {
+            {"stat", "string", "Se \"true\", mostra solo il riepilogo (default: true)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            bool stat = true;
+            auto it = args.find("stat");
+            if (it != args.end()) stat = (it->second != "false");
+            std::string cmd = stat ? "git diff --stat 2>&1" : "git diff 2>&1";
+            FILE* p = popen(cmd.c_str(), "r");
+            if (!p) return {false,"","Impossibile eseguire git diff"};
+            std::string out; char buf[4096];
+            while (fgets(buf,sizeof(buf),p)) { out+=buf; if(out.size()>16384) break; }
+            pclose(p);
+            if(out.empty()) out="[nessuna modifica non committata]";
+            return {true,out,""};
+        }
+    });
+
+    // --- Tool: git_log ---
+    register_tool({
+        "git_log",
+        "Mostra gli ultimi commit. Usa il formato --oneline.",
+        {
+            {"n", "number", "Numero di commit da mostrare (default: 10)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            int n = 10;
+            auto it = args.find("n");
+            if (it != args.end()) try { n = std::stoi(it->second); } catch(...) {}
+            std::string cmd = "git log --oneline -n "+std::to_string(n)+" 2>&1";
+            FILE* p = popen(cmd.c_str(),"r");
+            if(!p) return {false,"","Impossibile eseguire git log"};
+            std::string out; char buf[4096];
+            while(fgets(buf,sizeof(buf),p)) out+=buf;
+            pclose(p);
+            if(out.empty()) out="[nessun commit]";
+            return {true,out,""};
+        }
+    });
+
+    // --- Tool: git_status ---
+    register_tool({
+        "git_status",
+        "Mostra lo stato del working tree (file modificati, nuovi, staged).",
+        {},
+        [](const std::map<std::string, std::string> &) -> ToolResult {
+            FILE* p = popen("git status --short 2>&1","r");
+            if(!p) return {false,"","Impossibile eseguire git status"};
+            std::string out; char buf[4096];
+            while(fgets(buf,sizeof(buf),p)) out+=buf;
+            pclose(p);
+            if(out.empty()) out="[working tree pulito]";
+            return {true,out,""};
+        }
+    });
+
+    // --- Tool: git_branch ---
+    register_tool({
+        "git_branch",
+        "Mostra i branch locali. Il branch corrente è marcato con *.",
+        {},
+        [](const std::map<std::string, std::string> &) -> ToolResult {
+            FILE* p = popen("git branch 2>&1","r");
+            if(!p) return {false,"","Impossibile eseguire git branch"};
+            std::string out; char buf[4096];
+            while(fgets(buf,sizeof(buf),p)) out+=buf;
+            pclose(p);
+            if(out.empty()) out="[nessun branch]";
+            return {true,out,""};
+        }
+    });
+
+    // --- Tool: task_create ---
+    register_tool({
+        "task_create",
+        "Crea un nuovo task nella lista. I task vengono salvati in .cache/tasks.json.",
+        {
+            {"title", "string", "Titolo del task", true},
+            {"description", "string", "Descrizione opzionale", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it = args.find("title");
+            if (it == args.end()) return {false,"","Parametro 'title' mancante"};
+            std::string desc = "";
+            auto it_d = args.find("description");
+            if (it_d != args.end()) desc = it_d->second;
+
+            // Carica task esistenti
+            std::string path = ".cache/tasks.json";
+            fs::create_directories(".cache");
+            std::vector<std::map<std::string,std::string>> tasks;
+            std::ifstream in(path);
+            if (in.is_open()) {
+                std::string json((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+                in.close();
+                // Parsing semplice: [{"id":"1","title":"...","status":"..."}]
+                size_t pos = 0;
+                while ((pos = json.find("{\"id\"", pos)) != std::string::npos) {
+                    std::map<std::string,std::string> t;
+                    size_t end = json.find("}", pos);
+                    if (end == std::string::npos) break;
+                    std::string obj = json.substr(pos, end-pos+1);
+                    for (const char* key : {"id","title","status","description"}) {
+                        size_t kp = obj.find(std::string("\"")+key+"\"");
+                        if (kp == std::string::npos) continue;
+                        size_t vs = obj.find("\"", kp+strlen(key)+3);
+                        if (vs == std::string::npos) continue;
+                        size_t ve = obj.find("\"", vs+1);
+                        if (ve == std::string::npos) continue;
+                        t[key] = obj.substr(vs+1, ve-vs-1);
+                    }
+                    if (!t.empty()) tasks.push_back(t);
+                    pos = end + 1;
+                }
+            }
+
+            int new_id = 1;
+            for (const auto& t : tasks) {
+                try { int tid = std::stoi(t.at("id")); if (tid >= new_id) new_id = tid+1; }
+                catch(...) {}
+            }
+
+            std::map<std::string,std::string> task;
+            task["id"] = std::to_string(new_id);
+            task["title"] = it->second;
+            task["status"] = "todo";
+            task["description"] = desc;
+            tasks.push_back(task);
+
+            // Salva
+            std::ofstream out(path);
+            if (!out.is_open()) return {false,"","Impossibile salvare tasks.json"};
+            out << "[\n";
+            for (size_t i=0;i<tasks.size();i++) {
+                out << "  {\"id\":\""<<tasks[i]["id"]<<"\","
+                    << "\"title\":\""<<tasks[i]["title"]<<"\","
+                    << "\"status\":\""<<tasks[i]["status"]<<"\","
+                    << "\"description\":\""<<tasks[i]["description"]<<"\"}";
+                if (i<tasks.size()-1) out << ",";
+                out << "\n";
+            }
+            out << "]\n";
+            out.close();
+
+            return {true,"Task #"+std::to_string(new_id)+" creato: "+it->second,""};
+        }
+    });
+
+    // --- Tool: task_list ---
+    register_tool({
+        "task_list",
+        "Mostra la lista dei task con ID, stato e titolo.",
+        {},
+        [](const std::map<std::string, std::string> &) -> ToolResult {
+            std::string path = ".cache/tasks.json";
+            fs::create_directories(".cache");
+            std::ifstream in(path);
+            if (!in.is_open()) return {true,"[nessun task]",""};
+            std::string json((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            in.close();
+
+            std::string out;
+            size_t pos = 0;
+            while ((pos = json.find("{\"id\"", pos)) != std::string::npos) {
+                size_t end = json.find("}", pos);
+                if (end == std::string::npos) break;
+                std::string obj = json.substr(pos, end-pos+1);
+                std::string id, title, status;
+                for (const char* key : {"id","title","status"}) {
+                    size_t kp = obj.find(std::string("\"")+key+"\"");
+                    if (kp == std::string::npos) continue;
+                    size_t vs = obj.find("\"", kp+strlen(key)+3);
+                    if (vs == std::string::npos) continue;
+                    size_t ve = obj.find("\"", vs+1);
+                    if (ve == std::string::npos) continue;
+                    std::string val = obj.substr(vs+1, ve-vs-1);
+                    if (key==std::string("id")) id=val;
+                    else if (key==std::string("title")) title=val;
+                    else if (key==std::string("status")) status=val;
+                }
+                if (!id.empty()) {
+                    std::string icon = (status=="done")?"[x]":(status=="in_progress")?"[~]":"[ ]";
+                    out += icon+" #"+id+" "+title+"\n";
+                }
+                pos = end + 1;
+            }
+            if (out.empty()) out="[nessun task]";
+            return {true,out,""};
+        }
+    });
+
+    // --- Tool: task_update ---
+    register_tool({
+        "task_update",
+        "Aggiorna lo stato di un task. Stati: todo, in_progress, done.",
+        {
+            {"id",     "string", "ID del task da aggiornare", true},
+            {"status", "string", "Nuovo stato: todo, in_progress, done", true}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            auto it_id = args.find("id");
+            auto it_st = args.find("status");
+            if (it_id==args.end()) return {false,"","'id' mancante"};
+            if (it_st==args.end()) return {false,"","'status' mancante"};
+            std::string new_status = it_st->second;
+            if (new_status!="todo"&&new_status!="in_progress"&&new_status!="done")
+                return {false,"","Stato non valido: "+new_status};
+
+            std::string path = ".cache/tasks.json";
+            fs::create_directories(".cache");
+            std::ifstream in(path);
+            if (!in.is_open()) return {false,"","Nessun task file trovato"};
+            std::string json((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            in.close();
+
+            bool found=false;
+            size_t pos=0;
+            while ((pos=json.find("{\"id\"",pos))!=std::string::npos) {
+                size_t end=json.find("}",pos);
+                if(end==std::string::npos) break;
+                std::string obj=json.substr(pos,end-pos+1);
+                size_t ip=obj.find("\"id\"");
+                if(ip==std::string::npos){pos=end+1;continue;}
+                size_t vs=obj.find("\"",ip+5);
+                if(vs==std::string::npos){pos=end+1;continue;}
+                size_t ve=obj.find("\"",vs+1);
+                if(ve==std::string::npos){pos=end+1;continue;}
+                std::string tid=obj.substr(vs+1,ve-vs-1);
+                if(tid==it_id->second){
+                    size_t sp=obj.find("\"status\"");
+                    if(sp==std::string::npos){pos=end+1;continue;}
+                    size_t svs=obj.find("\"",sp+9);
+                    if(svs==std::string::npos){pos=end+1;continue;}
+                    size_t sve=obj.find("\"",svs+1);
+                    if(sve==std::string::npos){pos=end+1;continue;}
+                    std::string old_status=obj.substr(svs+1,sve-svs-1);
+                    json.replace(pos+svs+1,sve-svs-1,new_status);
+                    found=true;
+                    break;
+                }
+                pos=end+1;
+            }
+            if(!found) return {false,"","Task #"+it_id->second+" non trovato"};
+
+            std::ofstream out(path);
+            if(!out.is_open()) return {false,"","Impossibile salvare"};
+            out<<json;
+            out.close();
+            return {true,"Task #"+it_id->second+" -> "+new_status,""};
         }
     });
 }

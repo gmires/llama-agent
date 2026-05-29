@@ -17,6 +17,8 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 /*
  * ============================================================================
@@ -70,6 +72,7 @@ struct FTXUI::Impl {
     std::string response_text;       // response accumulato durante generazione
     std::string footer_text;
     std::string input_text;
+    int input_cursor = 0;           // posizione cursore nell'input
     std::string input_placeholder = "Scrivi (Ctrl+Enter = a capo, Enter = invia)...";
 
     // Scroll: 1.0 = fondo, 0.0 = inizio
@@ -188,7 +191,8 @@ struct FTXUI::Impl {
                 | color(Color::BlueLight) | dim;
 
         case MsgType::SYSTEM:
-            return paragraph(" " + msg.text) | dim | color(Color::GrayDark);
+            return paragraph(" " + msg.text) | dim | color(Color::White)
+                | bgcolor(Color::Grey23);
 
         default:
             return paragraph(msg.text) | color(Color::White);
@@ -241,6 +245,14 @@ struct FTXUI::Impl {
                             }
                             break;
                         }
+                        case TokenType::SYSTEM:
+                            // Output comandi slash: push direttamente come SYSTEM
+                            if (!response_text.empty()) {
+                                messages.push_back({MsgType::ASSISTANT, response_text});
+                                response_text.clear();
+                            }
+                            messages.push_back({MsgType::SYSTEM, text});
+                            break;
                         case TokenType::RESPONSE:
                         case TokenType::UNKNOWN:
                         default: response_text += text; break;
@@ -326,14 +338,46 @@ struct FTXUI::Impl {
                 content_elems.push_back(text(""));
             }
 
-            // --- Input ---
+            // --- Input con cursore visibile ---
             std::string disp = input_text.empty() ? input_placeholder : input_text;
             int ilines = 1 + (int)std::count(input_text.begin(), input_text.end(), '\n');
             ilines = std::min(8, std::max(3, ilines));
+            int term_w = std::max(80, screen.dimx());
 
-            Element input_area = paragraph(" \u276F " + disp)
-                | color(input_text.empty() ? Color::GrayDark : Color::White)
-                | borderEmpty | size(HEIGHT, LESS_THAN, ilines + 1);
+            Element input_area;
+            if (input_text.empty()) {
+                input_area = paragraph(" \u276F " + disp)
+                    | color(Color::GrayDark)
+                    | size(WIDTH, LESS_THAN, term_w - 2);
+            } else {
+                // Rendi il cursore: carattere corrente in reverse video
+                int c = input_cursor;
+                if (c < 0) c = 0;
+                if (c > (int)input_text.size()) c = (int)input_text.size();
+
+                std::string before = input_text.substr(0, c);
+                char at = c < (int)input_text.size() ? input_text[c] : ' ';
+                std::string after = c + 1 < (int)input_text.size() ?
+                    input_text.substr(c + 1) : "";
+
+                Element cursor_elem;
+                if (at == '\n')
+                    cursor_elem = text("\u23CE") | inverted | bgcolor(Color::White) | color(Color::Black);
+                else if (at == ' ')
+                    cursor_elem = text("\u2423") | inverted | color(Color::YellowLight);
+                else
+                    cursor_elem = text(std::string(1, at))
+                        | bold | inverted | bgcolor(Color::White) | color(Color::Black);
+
+                input_area = hbox(Elements{
+                    text(" \u276F ") | bold | color(Color::Green),
+                    paragraph(" " + before) | color(Color::White),
+                    cursor_elem,
+                    paragraph(after) | color(Color::White),
+                }) | size(WIDTH, LESS_THAN, term_w - 2);
+            }
+
+            input_area = input_area | borderEmpty | size(HEIGHT, LESS_THAN, ilines + 1);
 
             // --- Hint comandi ---
             Element hint = emptyElement();
@@ -344,18 +388,17 @@ struct FTXUI::Impl {
                 });
             }
 
-            // --- Footer ---
+            // --- Footer con shortcut ---
             Element footer_el = hbox(Elements{
                 text(" ") | size(WIDTH, EQUAL, 1),
                 text(spinner_str) | color(Color::Green) | bold,
                 text(" ") | size(WIDTH, EQUAL, 1),
                 text(footer_text) | color(Color::GrayLight) | flex,
-                text("PgUp/PgDn/Home/End  T=thinking") | dim | color(Color::GrayDark),
+                text("\u2190\u2192 cursore  Tab=completa  PgUp/Dn=scroll") | dim | color(Color::GrayDark),
             }) | bgcolor(Color::Grey15);
 
             // --- Content area con scroll solo verticale ---
             if (generating) scroll_y = 1.0f;
-            int term_w = std::max(80, screen.dimx());
             Element content = vbox(content_elems)
                 | size(WIDTH, LESS_THAN, term_w - 2);
             Element content_area = content
@@ -424,6 +467,7 @@ struct FTXUI::Impl {
                     std::lock_guard<std::mutex> tl(text_mutex);
                     prompt = input_text;
                     input_text.clear();
+                    input_cursor = 0;
                 }
                 while (!prompt.empty() && (prompt.back() == '\n' || prompt.back() == '\r'))
                     prompt.pop_back();
@@ -453,22 +497,157 @@ struct FTXUI::Impl {
             if (event == Event::CtrlJ || (event.is_character() && event.character() == "\n")) {
                 if (generating) return true;
                 std::lock_guard<std::mutex> tl(text_mutex);
-                input_text += '\n';
+                input_text.insert(input_cursor, "\n");
+                input_cursor++;
                 return true;
             }
 
-            // Backspace
+            // Backspace: cancella a sinistra del cursore
             if (event == Event::Backspace) {
+                if (generating) return true;
                 std::lock_guard<std::mutex> tl(text_mutex);
-                if (!input_text.empty()) input_text.pop_back();
+                if (input_cursor > 0 && !input_text.empty()) {
+                    input_text.erase(input_cursor - 1, 1);
+                    input_cursor--;
+                }
                 return true;
             }
 
-            // Caratteri stampabili
+            // Delete: cancella a destra del cursore
+            if (event == Event::Delete) {
+                if (generating) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                if (input_cursor < (int)input_text.size()) {
+                    input_text.erase(input_cursor, 1);
+                }
+                return true;
+            }
+
+            // Ctrl+A: inizio riga
+            if (event == Event::CtrlA) {
+                if (generating) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                input_cursor = 0;
+                return true;
+            }
+
+            // Ctrl+E: fine riga
+            if (event == Event::CtrlE) {
+                if (generating) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                input_cursor = (int)input_text.size();
+                return true;
+            }
+
+            // Ctrl+W o Alt+Backspace: cancella parola
+            if (event == Event::CtrlW) {
+                if (generating) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                int p = input_cursor - 1;
+                while (p >= 0 && input_text[p] == ' ') p--;
+                while (p >= 0 && input_text[p] != ' ') p--;
+                if (p < 0) p = 0;
+                int len = input_cursor - p;
+                input_text.erase(p, len);
+                input_cursor = p;
+                return true;
+            }
+
+            // Caratteri stampabili: inserisci al cursore
             if (event.is_character() && event.character() != "\n" && event.character() != "\r") {
                 std::lock_guard<std::mutex> tl(text_mutex);
-                input_text += event.character();
+                std::string ch = event.character();
+                if (ch == "\t") {
+                    // Tab: autocompletamento percorso file
+                    if (!input_text.empty() && input_cursor > 0) {
+                        int start = input_cursor - 1;
+                        while (start >= 0 && input_text[start] != ' ' && input_text[start] != '\n')
+                            start--;
+                        start++;
+                        std::string partial = input_text.substr(start, input_cursor - start);
+                        std::string completed = partial;
+                        try {
+                            std::string dir = ".";
+                            std::string prefix = partial;
+                            size_t slash = partial.find_last_of('/');
+                            if (slash != std::string::npos) {
+                                dir = partial.substr(0, slash);
+                                if (dir.empty()) dir = "/";
+                                prefix = partial.substr(slash + 1);
+                            }
+                            if (fs::exists(dir) && fs::is_directory(dir)) {
+                                for (const auto & e : fs::directory_iterator(dir,
+                                         fs::directory_options::skip_permission_denied)) {
+                                    std::string name = e.path().filename().string();
+                                    if (prefix.empty() || name.substr(0, prefix.size()) == prefix) {
+                                        completed = partial.substr(0, partial.size() - prefix.size()) + name;
+                                        if (e.is_directory()) completed += "/";
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (...) {}
+                        if (completed != partial) {
+                            input_text.replace(start, input_cursor - start, completed);
+                            input_cursor = start + (int)completed.size();
+                        }
+                    }
+                    return true;
+                }
+                input_text.insert(input_cursor, ch);
+                input_cursor += (int)ch.size();
                 return true;
+            }
+
+            // Freccia SINISTRA: muovi cursore (se input non vuoto)
+            if (event == Event::ArrowLeft && !generating) {
+                if (input_text.empty() || input_cursor <= 0) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                if (input_cursor > 0) input_cursor--;
+                return true;
+            }
+
+            // Freccia DESTRA: muovi cursore
+            if (event == Event::ArrowRight && !generating) {
+                if (input_text.empty() || input_cursor >= (int)input_text.size()) return true;
+                std::lock_guard<std::mutex> tl(text_mutex);
+                if (input_cursor < (int)input_text.size()) input_cursor++;
+                return true;
+            }
+
+            // Home: inizio input se testo presente, altrimenti scroll inizio
+            if (event == Event::Home && !generating) {
+                if (!input_text.empty()) {
+                    std::lock_guard<std::mutex> tl(text_mutex);
+                    input_cursor = 0;
+                } else {
+                    scroll_y = 0.0f;
+                }
+                return true;
+            }
+
+            // End: fine input se testo presente, altrimenti scroll fine
+            if (event == Event::End && !generating) {
+                if (!input_text.empty()) {
+                    std::lock_guard<std::mutex> tl(text_mutex);
+                    input_cursor = (int)input_text.size();
+                } else {
+                    scroll_y = 1.0f;
+                }
+                return true;
+            }
+
+            // Mouse: wheel scroll
+            if (event.is_mouse()) {
+                auto & mouse = event.mouse();
+                if (mouse.button == Mouse::WheelUp) {
+                    scroll_y = std::max(0.0f, scroll_y - 0.15f);
+                    return true;
+                }
+                if (mouse.button == Mouse::WheelDown) {
+                    scroll_y = std::min(1.0f, scroll_y + 0.15f);
+                    return true;
+                }
             }
 
             // Freccia SU: cronologia prompt
@@ -480,6 +659,7 @@ struct FTXUI::Impl {
                     else if (prompt_history_idx > 0)
                         prompt_history_idx--;
                     input_text = prompt_history[prompt_history_idx];
+                    input_cursor = (int)input_text.size();
                 }
                 return true;
             }
@@ -495,6 +675,7 @@ struct FTXUI::Impl {
                     } else {
                         input_text = prompt_history[prompt_history_idx];
                     }
+                    input_cursor = (int)input_text.size();
                 }
                 return true;
             }

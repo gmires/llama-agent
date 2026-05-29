@@ -154,36 +154,25 @@
 
 ### P3 — Bassa Priorità (nice to have)
 
-- [ ] **TUI miglioramenti**:
-  - Autocompletamento file path (`@` + Tab, come pi) con fuzzy search
-  - Mouse wheel scroll
-  - Syntax highlighting nel code block con shiki/tree-sitter
+- [ ] **TUI miglioramenti**: autocomplete file path, mouse wheel, syntax highlighting
 
-- [ ] **Steering messages**:
-  - Invia messaggi mentre l'agente lavora (durante esecuzione tool)
-  - Coda messaggi: steering (consegnato dopo turno corrente) e follow-up (dopo che l'agente finisce)
+- [ ] **Steering messages**: invia messaggi mentre l'agente lavora
 
-- [ ] **Tool: task management**:
-  - `task_create <title> <description>` — crea task
-  - `task_list` — mostra task attivi
-  - `task_update <id> <status>` — aggiorna stato (todo/in_progress/done)
+- [x] **Tool: task management**:
+  - `task_create <title> [description]` — crea task
+  - `task_list` — mostra task con stato ([ ]/[~]/[x])
+  - `task_update <id> <status>` — aggiorna (todo/in_progress/done)
   - Persistenza: `.cache/tasks.json`
 
-- [ ] **Tool: git integration**:
-  - `git_diff` — mostra diff non committato
+- [x] **Tool: git integration**:
+  - `git_diff [stat=true]` — diff working tree
   - `git_log [n=10]` — ultimi commit
-  - `git_status` — stato working tree
-  - `git_branch` — branch corrente + lista
+  - `git_status` — working tree status
+  - `git_branch` — branch locali
 
-- [ ] **LSP integration**:
-  - `lsp_diagnostics <file>` — errori/warning
-  - `lsp_hover <file> <line> <col>` — info simbolo
-  - Cliente LSP leggero via stdio
+- [ ] **LSP integration**: `lsp_diagnostics`, `lsp_hover`
 
-- [ ] **Agent profiles**:
-  - Profili predefiniti: `coder` (bash, read, write, grep, find), `researcher` (read, grep, fetch, find), `sysadmin` (bash, read, find)
-  - Ogni profilo: system prompt, tool set, permission defaults
-  - `--profile coder`
+- [ ] **Agent profiles**: `--profile coder/researcher/sysadmin`
 
 ---
 

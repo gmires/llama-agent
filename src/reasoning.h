@@ -12,6 +12,7 @@ enum class TokenType {
     THINKING,   // Token appartenente al ragionamento interno del modello
     RESPONSE,   // Token appartenente alla risposta finale
     TOOL_CALL,  // Indicatore visivo di chiamata tool
+    SYSTEM,     // Messaggio di sistema / output comandi slash
     UNKNOWN     // Token non ancora classificato
 };
 

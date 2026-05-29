@@ -307,6 +307,13 @@ void Agent::process_prompt_sync(const std::string & prompt)
 
     done_called_ = false;
 
+    // Helper: mostra output comandi slash nella UI senza venire sovrascritto
+    auto show_cmd = [this](const std::string & text) {
+        if (ui_) {
+            ui_->stream_token("  " + text + "\n", TokenType::SYSTEM);
+        }
+    };
+
     // --- Comandi speciali ---
     if (prompt == "/help") {
         std::string help =
@@ -321,12 +328,16 @@ void Agent::process_prompt_sync(const std::string & prompt)
             "  /exit    — Esci\n"
             "\n"
             "Tool disponibili: " + tools_->list_tool_names() + "\n";
-        if (ui_) ui_->show_info(help);
+        show_cmd(help);
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
     if (prompt == "/clear") {
         clear_history();
-        if (ui_) ui_->show_info("Cronologia cancellata.");
+        show_cmd("Cronologia cancellata.");
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
     if (prompt == "/regen") {
@@ -339,7 +350,9 @@ void Agent::process_prompt_sync(const std::string & prompt)
             "batch: " + std::to_string(params_.n_batch) + "\n"
             "Cache: " + kvcache_->get_cache_path() + "\n"
             "Cache mode: " + std::string(kvcache_->get_mode_name());
-        if (ui_) ui_->show_info(info);
+        show_cmd(info);
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
     if (prompt == "/session") {
@@ -350,18 +363,24 @@ void Agent::process_prompt_sync(const std::string & prompt)
            << "Conversation tokens: " << conversation_tokens_.size() << "\n"
            << "Cache: " << kvcache_->get_cache_path() << "\n"
            << "Stato: " << (ctx_ ? "attivo" : "non inizializzato");
-        if (ui_) ui_->show_info(ss.str());
+        show_cmd(ss.str());
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
     if (prompt == "/compact") {
         if (history_.size() <= 4) {
-            if (ui_) ui_->show_info("Troppo pochi messaggi per compattare.");
+            show_cmd("Troppo pochi messaggi per compattare.");
+            done_called_ = true;
+            if (ui_) ui_->set_generating(false);
             return;
         }
         size_t keep = std::max(size_t(2), history_.size() / 3);
         compact_context(keep);
-        if (ui_) ui_->show_info("Contesto compattato: " + std::to_string(keep) +
-                                " messaggi preservati.");
+        show_cmd("Contesto compattato: " + std::to_string(keep) +
+                 " messaggi preservati.");
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
     if (prompt == "/stats") {
@@ -382,7 +401,9 @@ void Agent::process_prompt_sync(const std::string & prompt)
            << "Cache key: " << kvcache_->get_cache_path() << "\n"
            << "Cache mode: " << kvcache_->get_mode_name() << "\n"
            << "Tools: " << tools_->list_tool_names();
-        if (ui_) ui_->show_info(ss.str());
+        show_cmd(ss.str());
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
         return;
     }
 
