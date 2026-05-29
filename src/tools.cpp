@@ -943,6 +943,9 @@ ToolRegistry::ToolRegistry()
             auto it_st = args.find("status");
             if (it_id==args.end()) return {false,"","'id' mancante"};
             if (it_st==args.end()) return {false,"","'status' mancante"};
+            std::string target_id = it_id->second;
+            // Il modello potrebbe passare "#1" invece di "1" — rimuovi #
+            if (!target_id.empty() && target_id[0] == '#') target_id = target_id.substr(1);
             std::string new_status = it_st->second;
             if (new_status!="todo"&&new_status!="in_progress"&&new_status!="done")
                 return {false,"","Stato non valido: "+new_status};
@@ -968,7 +971,7 @@ ToolRegistry::ToolRegistry()
                 size_t ve=obj.find("\"",vs+1);
                 if(ve==std::string::npos){pos=end+1;continue;}
                 std::string tid=obj.substr(vs+1,ve-vs-1);
-                if(tid==it_id->second){
+                if(tid==target_id){
                     size_t sp=obj.find("\"status\"");
                     if(sp==std::string::npos){pos=end+1;continue;}
                     size_t svs=obj.find("\"",sp+9);
@@ -982,13 +985,13 @@ ToolRegistry::ToolRegistry()
                 }
                 pos=end+1;
             }
-            if(!found) return {false,"","Task #"+it_id->second+" non trovato"};
+            if(!found) return {false,"","Task #"+target_id+" non trovato"};
 
             std::ofstream out(path);
             if(!out.is_open()) return {false,"","Impossibile salvare"};
             out<<json;
             out.close();
-            return {true,"Task #"+it_id->second+" -> "+new_status,""};
+            return {true,"Task #"+target_id+" -> "+new_status,""};
         }
     });
 }

@@ -148,7 +148,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 | `git_branch` | Branch locali | — |
 | `task_create` | Crea task in `.cache/tasks.json` | `title`, `description` |
 | `task_list` | Mostra task: `[ ]` todo, `[~]` progress, `[x]` done | — |
-| `task_update` | Aggiorna stato task (todo/in_progress/done) | `id`, `status` |
+| `task_update` | Aggiorna stato task (accetta `#1` o `1`) | `id`, `status` |
 
 ### Hook system
 

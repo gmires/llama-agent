@@ -470,6 +470,10 @@ static void test_task_tools()
     res = reg.execute("task_update", {{"id", "1"}, {"status", "done"}});
     CHECK(res.success, "task_update to done");
 
+    // Test con #1 (formato display del task_create)
+    res = reg.execute("task_update", {{"id", "#2"}, {"status", "in_progress"}});
+    CHECK(res.success, "task_update with # prefix");
+
     res = reg.execute("task_list", {});
     CHECK(res.output.find("[x]") != std::string::npos, "task_list shows done marker");
 
