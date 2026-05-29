@@ -125,7 +125,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 - **`"` nelle stringhe**: virgolette escape-aware nei contenuti non troncano il valore
 - **Pattern `chiave: valore`**: scan lineare fuori dalle stringhe — falsi key-value nel contenuto non generano falsi match
 
-### Tool disponibili (19)
+### Tool disponibili (20)
 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
@@ -137,6 +137,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 | `glob` | Trova file per pattern glob con brace expansion | `pattern` |
 | `find` | Ricerca file nativa C++ (fnmatch + brace expansion) | `path`, `pattern`, `type`, `max_depth` |
 | `ls` | Elenca directory (tipo, dimensione, nome) | `path` |
+| `tree` | Visualizzazione ricorsiva ad albero | `path`, `max_depth` (default: 3) |
 | `rm` | Elimina file | `path` |
 | `mv` | Sposta/rinomina file o directory | `from`, `to` |
 | `fetch` | Scarica URL via curl | `url`, `format`, `timeout` |
@@ -169,6 +170,44 @@ Quando il contesto raggiunge l'80% della capacità, invece di resettare completa
 Il modello conserva così il contesto di ciò che ha fatto senza perdere traccia dei file e delle decisioni prese.
 
 Comando manuale: `/compact` forza la compattazione immediata.
+
+### Config file JSON
+
+Crea `.llama-agent.json` nella root del progetto:
+
+```json
+{
+  "model": "~/models/qwen2.5-7b.gguf",
+  "cache_mode": "fast",
+  "n_ctx": 8192,
+  "n_predict": 8192,
+  "temperature": 0.7,
+  "n_gpu_layers": 35,
+  "tool_limit": 0
+}
+```
+
+Caricamento: `~/.config/llama-agent/config.json` (globale) + `.llama-agent.json` (progetto). Il progetto sovrascrive il globale. I flag CLI hanno priorità sul file.
+
+### Skills system
+
+Le skills estendono le capacità del modello con istruzioni specifiche, senza scrivere codice.
+
+Crea una directory `.skills/nome_skill/SKILL.md`:
+
+```markdown
+# C++ Coding Style
+Usa sempre snake_case per variabili e funzioni.
+Usa `const auto &` per i parametri.
+```
+
+Comandi:
+- `/skill` — elenca le skill disponibili
+- `/skill:nome` — mostra il contenuto di una skill
+
+Le skill vengono iniettate nel system prompt e il modello può usarle come riferimento.
+
+Vedi `skills_examples/` per esempi pronti all'uso (C++, Python, Rust, Git).
 
 ### Esempio di sessione
 

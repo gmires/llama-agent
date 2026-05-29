@@ -568,6 +568,67 @@ ToolRegistry::ToolRegistry()
         }
     });
 
+    // --- Tool: tree ---
+    register_tool({
+        "tree",
+        "Mostra la struttura ad albero di una directory. "
+        "Utile per esplorare la struttura del progetto.",
+        {
+            {"path", "string", "Directory radice (default: .)", false},
+            {"max_depth", "number", "Profondità massima (default: 3)", false}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            std::string root = ".";
+            int max_depth = 3;
+            auto it = args.find("path");
+            if (it != args.end()) root = it->second;
+            auto it_d = args.find("max_depth");
+            if (it_d != args.end()) try { max_depth = std::stoi(it_d->second); } catch(...) {}
+
+            if (!fs::exists(root) || !fs::is_directory(root))
+                return {false, "", "Directory non trovata: " + root};
+
+            std::string output = root + "\n";
+            int count = 0;
+
+            std::function<void(const std::string &, const std::string &, int)> walk;
+            walk = [&](const std::string & dir, const std::string & prefix, int depth) {
+                if (depth > max_depth || output.size() > 8192) return;
+                try {
+                    std::vector<fs::directory_entry> entries;
+                    for (const auto & e : fs::directory_iterator(dir,
+                             fs::directory_options::skip_permission_denied))
+                        entries.push_back(e);
+                    std::sort(entries.begin(), entries.end(), [](const auto & a, const auto & b) {
+                        if (a.is_directory() != b.is_directory()) return a.is_directory();
+                        return a.path().filename() < b.path().filename();
+                    });
+                    for (size_t i = 0; i < entries.size(); i++) {
+                        bool last = (i == entries.size() - 1);
+                        std::string name = entries[i].path().filename().string();
+                        std::string branch = last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 ";
+                        output += prefix + branch + name;
+                        if (entries[i].is_directory()) {
+                            output += "/\n";
+                            std::string new_prefix = prefix + (last ? "    " : "\u2502   ");
+                            walk(entries[i].path().string(), new_prefix, depth + 1);
+                        } else {
+                            output += "\n";
+                        }
+                        count++;
+                        if (count > 200 || output.size() > 8192) {
+                            output += prefix + "...\n";
+                            return;
+                        }
+                    }
+                } catch (...) {}
+            };
+            walk(root, "", 0);
+            if (output.size() > 8192) output = output.substr(0, 8192) + "\n...";
+            return {true, output, ""};
+        }
+    });
+
     // --- Tool: web_search ---
     register_tool({
         "web_search",

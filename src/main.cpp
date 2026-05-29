@@ -56,9 +56,14 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <memory>
+
+namespace fs = std::filesystem;
 
 // ===========================================================================
 // Prototipo funzione che aggiunge i flag specifici di llama-agent
@@ -149,7 +154,90 @@ int main(int argc, char ** argv)
         return 0;
     }
 
-    // --- Validazione parametri ---
+    // --- Carica configurazione da file JSON ---
+    // Ordine: ~/.config/llama-agent/config.json (globale) poi .llama-agent.json (progetto)
+    auto load_config_json = [](const std::string & path,
+                                std::map<std::string, std::string> & cfg) {
+        std::ifstream f(path);
+        if (!f.is_open()) return;
+        std::string json((std::istreambuf_iterator<char>(f)),
+                          std::istreambuf_iterator<char>());
+        f.close();
+        // Parsing semplice: cerca "chiave": "valore" o "chiave": numero
+        size_t pos = 0;
+        while ((pos = json.find("\"", pos)) != std::string::npos) {
+            size_t key_end = json.find("\"", pos + 1);
+            if (key_end == std::string::npos) break;
+            std::string key = json.substr(pos + 1, key_end - pos - 1);
+            size_t colon = json.find(":", key_end);
+            if (colon == std::string::npos) { pos = key_end + 1; continue; }
+            size_t val_start = colon + 1;
+            while (val_start < json.size() && (json[val_start] == ' ' || json[val_start] == '\t' ||
+                   json[val_start] == '\n' || json[val_start] == '\r')) val_start++;
+            if (val_start >= json.size()) break;
+            std::string val;
+            if (json[val_start] == '"') {
+                size_t ve = json.find("\"", val_start + 1);
+                if (ve != std::string::npos) {
+                    val = json.substr(val_start + 1, ve - val_start - 1);
+                    pos = ve + 1;
+                } else break;
+            } else {
+                size_t ve = val_start;
+                while (ve < json.size() && json[ve] != ',' && json[ve] != '}' &&
+                       json[ve] != '\n' && json[ve] != '\r') ve++;
+                val = json.substr(val_start, ve - val_start);
+                while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+                    val.pop_back();
+                pos = ve;
+            }
+            if (!key.empty() && !val.empty() && key != "permissions" && key != "skills")
+                cfg[key] = val;
+        }
+        fprintf(stderr, "[Config] Caricato: %s (%zu chiavi)\n", path.c_str(), cfg.size());
+    };
+
+    std::map<std::string, std::string> config;
+    // Globale
+    {
+        const char * home = getenv("HOME");
+        if (home) {
+            std::string global = std::string(home) + "/.config/llama-agent/config.json";
+            load_config_json(global, config);
+        }
+    }
+    // Progetto
+    load_config_json(".llama-agent.json", config);
+
+    // Applica config ai params (solo se non già impostati da CLI)
+    auto set_if = [&](const std::string & key, auto & target) {
+        auto it = config.find(key);
+        if (it != config.end()) {
+            std::stringstream ss(it->second);
+            ss >> target;
+        }
+    };
+    if (params.model.path.empty()) {
+        auto it = config.find("model");
+        if (it != config.end()) params.model.path = it->second;
+    }
+    if (params.n_ctx == 0) set_if("n_ctx", params.n_ctx);
+    if (params.n_predict < 0) set_if("n_predict", params.n_predict);
+    if (params.n_gpu_layers == -1) set_if("n_gpu_layers", params.n_gpu_layers);
+    if (params.sampling.temp <= 0.0f) {
+        auto it = config.find("temperature");
+        if (it != config.end()) {
+            std::stringstream ss(it->second);
+            ss >> params.sampling.temp;
+        }
+    }
+    if (cache_mode == "fast") {
+        auto it = config.find("cache_mode");
+        if (it != config.end()) cache_mode = it->second;
+    }
+    if (tool_limit == 0) {
+        set_if("tool_limit", tool_limit);
+    }
     if (params.model.path.empty() && params.model.hf_repo.empty()) {
         fprintf(stderr, "\033[31mErrore: nessun modello specificato.\033[0m\n");
         fprintf(stderr, "  Usa: %s -m <percorso_modello.gguf>\n", argv[0]);
@@ -206,6 +294,36 @@ int main(int argc, char ** argv)
 
     // Imposta limite tool call (0 = illimitato)
     agent->set_tool_limit(tool_limit);
+
+    // --- Carica skills da directory .skills/ e ~/.config/llama-agent/skills/ ---
+    {
+        std::map<std::string, std::string> skills;
+        auto load_skills_dir = [&](const std::string & dir) {
+            if (!fs::exists(dir) || !fs::is_directory(dir)) return;
+            for (const auto & entry : fs::directory_iterator(dir)) {
+                if (!entry.is_directory()) continue;
+                std::string skill_name = entry.path().filename().string();
+                std::string skill_md = entry.path().string() + "/SKILL.md";
+                if (fs::exists(skill_md)) {
+                    std::ifstream f(skill_md);
+                    if (f.is_open()) {
+                        std::string content((std::istreambuf_iterator<char>(f)),
+                                             std::istreambuf_iterator<char>());
+                        skills[skill_name] = content;
+                        fprintf(stderr, "[Skills] Caricata: %s (%zu byte)\n",
+                                skill_name.c_str(), content.size());
+                    }
+                }
+            }
+        };
+        load_skills_dir(".skills");
+        const char * home = getenv("HOME");
+        if (home) load_skills_dir(std::string(home) + "/.config/llama-agent/skills");
+        if (!skills.empty()) {
+            agent->set_skills(skills);
+            fprintf(stderr, "[Skills] %zu skills caricate\n", skills.size());
+        }
+    }
 
     // --- Inizializzazione agente (carica modello e contesto) ---
     if (!agent->init()) {

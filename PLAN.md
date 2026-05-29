@@ -93,29 +93,16 @@
   - Struttura: ogni entry ha id, parentId, turn (user/assistant/toolResult), timestamp
 
 - [ ] **Skills system** (Agent Skills standard):
-  - Carica file `SKILL.md` da `.skills/`, `~/.config/llama-agent/skills/`
-  - `/skill:name` per invocare manualmente
-  - Inietta skills nel system prompt come ` <skill name="...">...</skill>`
-  - Il modello decide quando caricare automaticamente
-  - Sistema plugin-like senza codice: basta scrivere un file markdown
+  - [x] Carica file `SKILL.md` da `.skills/`, `~/.config/llama-agent/skills/`
+  - [x] `/skill` per elencare, `/skill:name` per caricare
+  - [x] Skills iniettate nel system prompt
+  - [ ] Caricamento automatico da parte del modello (future)
 
 - [ ] **Config file** (JSON):
-  ```json
-  {
-    "model": "~/models/qwen2.5-7b.gguf",
-    "cache_mode": "fast",
-    "n_ctx": 8192,
-    "temperature": 0.7,
-    "permissions": {
-      "bash": "ask",
-      "write": "allow"
-    },
-    "system_prompt": "Sei un assistente esperto in C++...",
-    "context_files": ["AGENTS.md", "CLAUDE.md"]
-  }
-  ```
-  - Caricamento: `~/.config/llama-agent/config.json` (globale) + `.llama-agent.json` (progetto)
-  - Merge: progetto sovrascrive globale
+  - [x] `.llama-agent.json` nel progetto
+  - [x] `~/.config/llama-agent/config.json` globale
+  - [x] Merge: progetto sovrascrive globale
+  - Supporta: model, cache_mode, n_ctx, n_predict, temperature, n_gpu_layers, tool_limit
 
 ### P1 — Alta Priorità (funzionalità chiave)
 
@@ -140,7 +127,7 @@
   - `ls <path>` — lista contenuto directory (colonne: tipo, dimensione, nome)
   - `rm <path>` — elimina file (protetto da permessi)
   - `mv <from> <to>` — sposta/rinomina file
-  - [ ] `tree <path> <max_depth>` — visualizzazione ad albero
+  - [x] `tree <path> [max_depth=3]` — visualizzazione ad albero
 
 - [x] **Comandi slash estesi**:
   - `/model` — mostra modello corrente

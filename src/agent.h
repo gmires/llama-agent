@@ -111,6 +111,11 @@ public:
     void set_tool_limit(int limit) { tool_limit_ = limit; }
 
     /**
+     * Imposta le skills da iniettare nel system prompt.
+     */
+    void set_skills(const std::map<std::string, std::string> & skills) { skills_ = skills; }
+
+    /**
      * Notifica che la generazione è terminata (chiamato dal thread di inferenza).
      * Salva KVCache + cronologia conversazione su disco.
      */
@@ -154,6 +159,9 @@ private:
 
     // Limite tool call per turno (0 = illimitato)
     int tool_limit_ = 0;
+
+    // Skills caricate
+    std::map<std::string, std::string> skills_;
 
     // Risultato dell'ultima generazione
     std::string last_response_;

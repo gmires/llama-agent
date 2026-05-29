@@ -384,6 +384,32 @@ void Agent::process_prompt_sync(const std::string & prompt)
         if (ui_) ui_->set_generating(false);
         return;
     }
+    if (prompt == "/skill") {
+        std::string list = "Skills disponibili (/skill:<nome> per caricare):\n";
+        if (skills_.empty()) {
+            list += "  (nessuna skill configurata)\n";
+            list += "  Crea file .skills/nome/SKILL.md per aggiungerne.";
+        } else {
+            for (const auto & [name, _] : skills_)
+                list += "  /skill:" + name + "\n";
+        }
+        show_cmd(list);
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
+        return;
+    }
+    if (prompt.size() > 7 && prompt.substr(0, 7) == "/skill:") {
+        std::string name = prompt.substr(7);
+        auto it = skills_.find(name);
+        if (it != skills_.end()) {
+            show_cmd("Skill caricata: " + name + "\n" + it->second);
+        } else {
+            show_cmd("Skill non trovata: " + name + ". Usa /skill per la lista.");
+        }
+        done_called_ = true;
+        if (ui_) ui_->set_generating(false);
+        return;
+    }
     if (prompt == "/stats") {
         std::stringstream ss;
         ss << "=== Statistiche ===\n"
@@ -1039,7 +1065,7 @@ void Agent::handle_tool_call(const std::string & name,
 
 std::string Agent::build_system_prompt() const
 {
-    return
+    std::string prompt =
         "Sei un assistente AI con accesso ai seguenti strumenti:\n\n"
         + tools_->to_json_schema() + "\n\n"
         "Per usare uno strumento, rispondi con un blocco JSON:\n"
@@ -1049,6 +1075,18 @@ std::string Agent::build_system_prompt() const
         "Prima di scrivere file, leggi il contenuto esistente.\n"
         "Per modifiche mirate, preferisci 'edit' a 'write'.\n"
         "Pensa passo-passo.\n";
+
+    // Inietta skills nel prompt
+    if (!skills_.empty()) {
+        prompt += "\n## Skills disponibili\n\n";
+        prompt += "Usa /skill:<nome> per caricare una skill. Le skill estendono "
+                  "le tue capacità con istruzioni specifiche:\n\n";
+        for (const auto & [name, content] : skills_) {
+            prompt += "### " + name + "\n" + content + "\n\n";
+        }
+    }
+
+    return prompt;
 }
 
 // ===========================================================================
@@ -1207,6 +1245,6 @@ bool Agent::load_conversation()
         fprintf(stderr, "[Agent] Cronologia caricata: %zu messaggi\n", history_.size());
         return true;
     }
-
     return false;
 }
+
