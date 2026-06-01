@@ -70,6 +70,8 @@ GGML_BLAS_VENDOR=MKL
 | `--no-cache` | off | Disabilita cache persistente su disco |
 | `--cache-mode` | `fast` | Modalità cache: `fast` (stato binario, ms) o `token` (solo token, prefill) |
 | `--tool-limit N` | `0` | Limite tool call per turno (0 = illimitato) |
+| `--tool-log` | off | Log dettagliato delle tool call su stderr (debug) |
+| `--yes`, `-y` | off | Auto-consenti tutti i permessi, non chiedere mai |
 | `--single-turn` | off | Elabora il prompt `-p` ed esce (modalità non interattiva) |
 
 Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/examples/main/README.md) sono supportati:

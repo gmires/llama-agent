@@ -40,6 +40,9 @@ PermissionAction PermissionManager::check(
     const std::string & tool_name,
     const std::string & resource)
 {
+    // 0. Auto-allow globale (--yes flag)
+    if (auto_allow_) return PermissionAction::ALLOW;
+
     // 1. Verifica i permessi permanenti di sessione
     const auto session_it = session_allowed_.find(tool_name);
     if (session_it != session_allowed_.end()) {

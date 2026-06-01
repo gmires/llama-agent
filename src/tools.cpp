@@ -184,8 +184,8 @@ ToolRegistry::ToolRegistry()
     // --- Tool: write ---
     register_tool({
         "write",
-        "Scrive contenuto in un file. "
-        "Utile per creare o modificare file di codice, documenti, ecc. "
+        "Scrive contenuto in un file. Crea automaticamente le directory padre. "
+        "IMPORTANTE: le virgolette nel contenuto vanno escapate con \\\". "
         "ATTENZIONE: sovrascrive il file esistente.",
         {
             {"path", "string", "Percorso del file da scrivere", true},
@@ -201,15 +201,26 @@ ToolRegistry::ToolRegistry()
                 return {false, "", "Parametro 'content' mancante"};
             }
 
-            std::ofstream file(it_path->second);
+            // Crea directory padre se necessario (es. dir/file.py)
+            std::string path_str = it_path->second;
+            fs::path parent = fs::path(path_str).parent_path();
+            if (!parent.empty() && !fs::exists(parent)) {
+                std::error_code ec;
+                fs::create_directories(parent, ec);
+                if (ec) {
+                    return {false, "", "Impossibile creare directory: " + parent.string()};
+                }
+            }
+
+            std::ofstream file(path_str);
             if (!file.is_open()) {
-                return {false, "", "Impossibile scrivere il file: " + it_path->second};
+                return {false, "", "Impossibile scrivere il file: " + path_str};
             }
 
             file << it_content->second;
             file.close();
 
-            return {true, "File scritto con successo: " + it_path->second + " (" +
+            return {true, "File scritto con successo: " + path_str + " (" +
                         std::to_string(it_content->second.size()) + " bytes)", ""};
         }
     });

@@ -110,6 +110,10 @@ public:
      */
     void set_tool_limit(int limit) { tool_limit_ = limit; }
 
+    void set_tool_log(bool enable) { tool_log_ = enable; }
+
+    void set_yes_mode(bool enable) { if (permissions_) permissions_->set_auto_allow(enable); }
+
     /**
      * Imposta le skills da iniettare nel system prompt.
      */
@@ -159,6 +163,8 @@ private:
 
     // Limite tool call per turno (0 = illimitato)
     int tool_limit_ = 0;
+
+    bool tool_log_ = false;
 
     // Skills caricate
     std::map<std::string, std::string> skills_;

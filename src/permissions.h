@@ -88,8 +88,14 @@ public:
      */
     void set_global_default(PermissionAction action);
 
+    /**
+     * Se true, tutti i check() restituiscono ALLOW senza chiedere.
+     */
+    void set_auto_allow(bool enable) { auto_allow_ = enable; }
+
 private:
     PermissionAction global_default_ = PermissionAction::ASK;
+    bool auto_allow_ = false;
     std::map<std::string, ToolPermission> tool_permissions_;
     std::map<std::string, std::set<std::string>> session_allowed_;  // tool → {resources}
 

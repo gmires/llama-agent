@@ -79,7 +79,9 @@ namespace fs = std::filesystem;
 static int filter_agent_args(int argc, char ** argv,
                               bool & out_simple_ui, bool & out_no_cache,
                               int & out_tool_limit,
-                              std::string & out_cache_mode)
+                              std::string & out_cache_mode,
+                              bool & out_tool_log,
+                              bool & out_yes)
 {
     int write_idx = 1;
 
@@ -93,6 +95,16 @@ static int filter_agent_args(int argc, char ** argv,
 
         if (arg == "--no-cache") {
             out_no_cache = true;
+            continue;
+        }
+
+        if (arg == "--tool-log") {
+            out_tool_log = true;
+            continue;
+        }
+
+        if (arg == "--yes" || arg == "-y") {
+            out_yes = true;
             continue;
         }
 
@@ -128,6 +140,8 @@ int main(int argc, char ** argv)
     // --- Parametri specifici di llama-agent ---
     bool simple_ui = false;
     bool no_cache = false;
+    bool tool_log = false;
+    bool yes_mode = false;
     int  tool_limit = 0;   // 0 = illimitato
     std::string cache_mode = "fast";
 
@@ -140,7 +154,7 @@ int main(int argc, char ** argv)
 
     // --- Parsing argomenti CLI ---
     // Prima: filtra i flag specifici di llama-agent da argv
-    argc = filter_agent_args(argc, argv, simple_ui, no_cache, tool_limit, cache_mode);
+    argc = filter_agent_args(argc, argv, simple_ui, no_cache, tool_limit, cache_mode, tool_log, yes_mode);
 
     // Poi: parsing standard dei parametri llama-cli con l'argv filtrato
     if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_CLI)) {
@@ -294,6 +308,18 @@ int main(int argc, char ** argv)
 
     // Imposta limite tool call (0 = illimitato)
     agent->set_tool_limit(tool_limit);
+
+    // Abilita log tool call se richiesto
+    if (tool_log) {
+        agent->set_tool_log(true);
+        fprintf(stderr, "[Config] Tool call logging abilitato\n");
+    }
+
+    // Modalità yes: auto-consenti tutti i permessi
+    if (yes_mode) {
+        agent->set_yes_mode(true);
+        fprintf(stderr, "[Config] Auto-consenti tutti i permessi (--yes)\n");
+    }
 
     // --- Carica skills da directory .skills/ e ~/.config/llama-agent/skills/ ---
     {

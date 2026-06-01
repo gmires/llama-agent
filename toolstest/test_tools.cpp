@@ -3,6 +3,8 @@
 
 #include <iostream>
 #include <cassert>
+#include <filesystem>
+namespace fs = std::filesystem;
 #include <string>
 #include <fstream>
 #include <cstdio>
@@ -148,6 +150,19 @@ static void test_write_tool()
     CHECK(read_content.find("def main():") != std::string::npos, "write has def main");
     CHECK(read_content.find("\\n") == std::string::npos, "no literal \\n");
     CHECK(read_content.find("#include") == std::string::npos, "no C include");
+
+    // Test con directory annidata (deve creare le directory padre)
+    std::string nested = "/tmp/test_agent/subdir/file.txt";
+    res = reg.execute("write", {{"path", nested}, {"content", "nested"}});
+    CHECK(res.success, "write nested dir success");
+    {
+        std::ifstream f2(nested);
+        CHECK(f2.is_open(), "write nested file exists");
+        std::string c2((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
+        CHECK(c2 == "nested", "write nested content matches");
+    }
+    std::remove(nested.c_str());
+    fs::remove("/tmp/test_agent/subdir");
 
     std::remove(test_file.c_str());
 

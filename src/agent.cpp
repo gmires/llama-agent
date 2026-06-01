@@ -995,6 +995,23 @@ void Agent::handle_tool_call(const std::string & name,
     std::string tool_msg = "\n  >> " + name + "(" + args_str + ")";
     ui_->stream_token(tool_msg, TokenType::TOOL_CALL);
 
+    // Tool log: stampa chiamata e parametri completi
+    if (tool_log_) {
+        fprintf(stderr, "\033[35m[TOOL] %s(", name.c_str());
+        bool first = true;
+        for (const auto & [k, v] : args) {
+            if (!first) fprintf(stderr, ", ");
+            fprintf(stderr, "%s=\"", k.c_str());
+            if (v.size() > 200)
+                fprintf(stderr, "%.200s... [%zu bytes]", v.c_str(), v.size());
+            else
+                fprintf(stderr, "%s", v.c_str());
+            fprintf(stderr, "\"");
+            first = false;
+        }
+        fprintf(stderr, ")\033[0m\n");
+    }
+
     // Verifica permessi
     PermissionAction perm = permissions_->check(name, args_str);
 
@@ -1034,6 +1051,28 @@ void Agent::handle_tool_call(const std::string & name,
         feedback = "\n  >> " + name + " ERR: " + result.error + "\n";
     }
 
+    // Tool log: stampa risultato
+    if (tool_log_) {
+        if (result.success) {
+            fprintf(stderr, "\033[35m[TOOL] %s OK: %s\033[0m\n", name.c_str(),
+                    result.output.substr(0, 120).c_str());
+        } else {
+            fprintf(stderr, "\033[35m[TOOL] %s ERR: %s\033[0m\n", name.c_str(),
+                    result.error.c_str());
+        }
+        // Mostra dettagli se presenti
+        if (!result.details.empty()) {
+            fprintf(stderr, "\033[35m[TOOL] %s details: ", name.c_str());
+            bool first = true;
+            for (const auto & [k, v] : result.details) {
+                if (!first) fprintf(stderr, ", ");
+                fprintf(stderr, "%s=%s", k.c_str(), v.c_str());
+                first = false;
+            }
+            fprintf(stderr, "\033[0m\n");
+        }
+    }
+
     // Mostra risultato nella UI come blocco TOOL_RESULT
     if (ui_) {
         std::string short_output = result.success
@@ -1070,6 +1109,8 @@ std::string Agent::build_system_prompt() const
         + tools_->to_json_schema() + "\n\n"
         "Per usare uno strumento, rispondi con un blocco JSON:\n"
         "```json\n{\"tool\": \"nome\", \"args\": {\"param\": \"valore\"}}\n```\n\n"
+        "IMPORTANTE: nei contenuti JSON, le virgolette vanno ESCAPATE con \\\".\n"
+        "Es: \"content\": \"print(\\\"hello\\\")\"  NON \"content\": \"print(\"hello\")\"\n\n"
         "Dopo il risultato, continua la conversazione.\n"
         "Se non servono strumenti, rispondi normalmente.\n"
         "Prima di scrivere file, leggi il contenuto esistente.\n"

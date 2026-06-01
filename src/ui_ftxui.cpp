@@ -339,46 +339,66 @@ struct FTXUI::Impl {
                 content_elems.push_back(text(""));
             }
 
-            // --- Input con cursore visibile ---
-            std::string disp = input_text.empty() ? input_placeholder : input_text;
-            int ilines = 1 + (int)std::count(input_text.begin(), input_text.end(), '\n');
-            ilines = std::min(8, std::max(3, ilines));
+            // --- Input con cursore visibile e supporto multilinea ---
             int term_w = std::max(80, screen.dimx());
+            int max_input_lines = std::max(5, screen.dimy() / 5);
 
             Element input_area;
             if (input_text.empty()) {
-                input_area = paragraph(" \u276F " + disp)
+                input_area = paragraph(" \u276F " + input_placeholder)
                     | color(Color::GrayDark)
                     | size(WIDTH, LESS_THAN, term_w - 2);
             } else {
-                // Rendi il cursore: carattere corrente in reverse video
-                int c = input_cursor;
-                if (c < 0) c = 0;
-                if (c > (int)input_text.size()) c = (int)input_text.size();
+                // Calcola su quale linea si trova il cursore e in quale colonna
+                int cursor_line = 0, col = 0;
+                for (int idx = 0; idx < input_cursor && idx < (int)input_text.size(); idx++) {
+                    if (input_text[idx] == '\n') { cursor_line++; col = 0; }
+                    else col++;
+                }
 
-                std::string before = input_text.substr(0, c);
-                char at = c < (int)input_text.size() ? input_text[c] : ' ';
-                std::string after = c + 1 < (int)input_text.size() ?
-                    input_text.substr(c + 1) : "";
+                // Split input in righe
+                std::vector<std::string> lines;
+                std::istringstream iss(input_text);
+                std::string l;
+                while (std::getline(iss, l)) lines.push_back(l);
+                if (!input_text.empty() && input_text.back() == '\n')
+                    lines.push_back(""); // riga vuota finale
 
-                Element cursor_elem;
-                if (at == '\n')
-                    cursor_elem = text("\u23CE") | inverted | bgcolor(Color::White) | color(Color::Black);
-                else if (at == ' ')
-                    cursor_elem = text("\u2423") | inverted | color(Color::YellowLight);
-                else
-                    cursor_elem = text(std::string(1, at))
-                        | bold | inverted | bgcolor(Color::White) | color(Color::Black);
+                if (lines.empty()) lines.push_back("");
 
-                input_area = hbox(Elements{
-                    text(" \u276F ") | bold | color(Color::Green),
-                    paragraph(" " + before) | color(Color::White),
-                    cursor_elem,
-                    paragraph(after) | color(Color::White),
-                }) | size(WIDTH, LESS_THAN, term_w - 2);
+                Elements line_elems;
+                for (int li = 0; li < (int)lines.size() && li < max_input_lines; li++) {
+                    std::string prefix = li == 0 ? " \u276F " : "   ";
+                    if (li == cursor_line) {
+                        // Mostra cursore come marker █ nella riga corrente
+                        int cc = std::min(col, (int)lines[li].size());
+                        std::string marked = lines[li];
+                        if (cc < (int)marked.size())
+                            marked.insert(cc, "\033[7m \033[27m"); // non funziona in FTXUI
+                        // Invece: mostra linea con marker visibile
+                        std::string show = prefix + lines[li];
+                        if (cc < (int)lines[li].size())
+                            show = prefix + lines[li].substr(0, cc) + "\u2588" + lines[li].substr(cc);
+                        else
+                            show = prefix + lines[li] + "\u2588";
+                        line_elems.push_back(
+                            paragraph(show) | color(Color::White) | bgcolor(Color::Grey11)
+                                | size(WIDTH, LESS_THAN, term_w - 2));
+                    } else {
+                        line_elems.push_back(
+                            paragraph(prefix + lines[li]) | color(Color::White)
+                                | size(WIDTH, LESS_THAN, term_w - 2));
+                    }
+                }
+                if ((int)lines.size() > max_input_lines) {
+                    line_elems.push_back(
+                        text("   ... (+" + std::to_string(lines.size() - max_input_lines) + " righe)")
+                            | dim | color(Color::GrayDark));
+                }
+                input_area = vbox(line_elems)
+                    | borderEmpty
+                    | size(HEIGHT, LESS_THAN, max_input_lines + 2);
             }
-
-            input_area = input_area | borderEmpty | size(HEIGHT, LESS_THAN, ilines + 1);
 
             // --- Hint comandi ---
             Element hint = emptyElement();
@@ -499,9 +519,9 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // Ctrl+J, Ctrl+Enter: newline
-            if (event == Event::CtrlJ || (event.is_character() && event.character() == "\n")) {
-                if (generating) return true;
+            // Ctrl+J, Ctrl+M, Ctrl+Enter: inserisci newline al cursore
+            if ((event == Event::CtrlJ || event == Event::CtrlM ||
+                 (event.is_character() && event.character() == "\n")) && !generating) {
                 std::lock_guard<std::mutex> tl(text_mutex);
                 input_text.insert(input_cursor, "\n");
                 input_cursor++;
