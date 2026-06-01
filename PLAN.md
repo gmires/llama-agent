@@ -64,7 +64,7 @@
 - [x] Parsing tool call: scan lineare chiavi fuori dalle stringhe, no falsi match
 - [x] Supporto: key alias (`tool`/`function`/`tool_call`), args alias (`args`/`parameters`/`params`)
 - [x] Brace expansion: `*.{h,cpp}` → `*.h`, `*.cpp` in glob/find
-- [x] 104 test totali (37 parser + 12 tool exec + 7 hook + 4 git + 3 task + permissions)
+- [x] 121 test totali (37 parser + 12 tool exec + 7 hook + 5 diff + 4 git + 3 task + 5 read + permissions)
 
 ### Permessi
 - [x] Sistema gerarchico: globale → per-tool → per-pattern

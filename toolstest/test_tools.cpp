@@ -206,6 +206,17 @@ static void test_read_tool()
     res = reg.execute("read", {{"path", "/nonexistent_file_xyz"}});
     CHECK(!res.success, "read nonexistent file fails");
 
+    // Test offset/limit
+    auto res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"offset", "0"}, {"limit", "3"}});
+    CHECK(res2.success, "read with offset/limit");
+    CHECK(res2.output.find("cmake_minimum_required") != std::string::npos, "read limit has content");
+    CHECK(res2.output.find("1:") != std::string::npos, "read shows line numbers");
+    CHECK(res2.details["total_lines"] != "", "read has total_lines detail");
+
+    // Offset oltre la fine
+    res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"offset", "9999"}});
+    CHECK(!res2.success, "read offset beyond EOF fails");
+
     std::cout << "  OK\n";
 }
 
@@ -527,7 +538,7 @@ static void test_diff_apply()
         CHECK(c == "line1\nnew line2\nextra line\nline3\n", "diff_apply result correct");
     }
 
-    // Test 2: hunk non matcha (contesto sbagliato)
+    // Test 2: hunk non matcha (contesto sbagliato) — deve mostrare contesto reale
     {
         std::ofstream of(f); of << "line1\nline2\nline3\n"; of.close();
         std::string diff =
@@ -538,8 +549,10 @@ static void test_diff_apply()
             " WRONG_CONTEXT\n";  // non matcha line3
         auto res = reg.execute("diff_apply", {{"path", f}, {"diff", diff}});
         CHECK(!res.success, "diff_apply fails on bad context");
-        CHECK(res.error.find("contesto") != std::string::npos || res.error.find("Hunk") != std::string::npos,
-              "diff_apply error mentions context/hunk");
+        CHECK(res.error.find("SUGGERIMENTO") != std::string::npos,
+              "diff_apply error suggests re-reading file");
+        CHECK(res.error.find("line3") != std::string::npos,
+              "diff_apply shows actual file content around failure");
     }
 
     // Test 3: diff vuoto

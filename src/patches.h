@@ -10,8 +10,9 @@
  */
 struct PatchResult {
     bool ok;
-    std::string modified;   // contenuto modificato (se ok)
-    std::string error;      // messaggio errore (se !ok)
+    std::string modified;       // contenuto modificato (se ok)
+    std::string error;          // messaggio errore (se !ok)
+    std::string context_snippet;// contenuto reale attorno al punto di fallimento
 };
 
 /**

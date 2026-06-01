@@ -132,7 +132,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
 | `bash` | Esegue comandi shell (2>&1) con timeout configurabile | `command`, `timeout` |
-| `read` | Legge file di testo (max 64KB) | `path` |
+| `read` | Legge file con numeri di riga (offset/limit opzionali) | `path`, `offset`, `limit` |
 | `write` | Scrive/crea file di testo | `path`, `content` |
 | `edit` | Sostituisce stringa in file (match unico) | `path`, `old_string`, `new_string` |
 | `diff_apply` | Applica unified diff con verifica contesto | `path`, `diff` |

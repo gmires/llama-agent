@@ -151,10 +151,16 @@ ToolRegistry::ToolRegistry()
     // --- Tool: read ---
     register_tool({
         "read",
-        "Legge il contenuto di un file di testo. "
-        "Utile per esaminare codice, configurazioni, documenti.",
+        "Legge il contenuto di un file di testo. Supporta offset e limit per "
+        "leggere porzioni specifiche. Mostra i numeri di riga. "
+        "USA 'read' PRIMA di generare una diff per 'diff_apply'.\n"
+        "Esempi:\n"
+        "  read(path=\"file.cpp\") — tutto il file\n"
+        "  read(path=\"file.cpp\", offset=40, limit=20) — righe 41-60",
         {
-            {"path", "string", "Percorso del file da leggere", true}
+            {"path",  "string", "Percorso del file da leggere", true},
+            {"offset","number", "Riga da cui iniziare (0-indexed, default: 0)", false},
+            {"limit", "number", "Numero massimo di righe (0 = tutto, default: 0)", false}
         },
         [](const std::map<std::string, std::string> & args) -> ToolResult {
             const auto it = args.find("path");
@@ -167,18 +173,48 @@ ToolRegistry::ToolRegistry()
                 return {false, "", "Impossibile aprire il file: " + it->second};
             }
 
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            std::string content = buffer.str();
+            int offset = 0, limit = 0;
+            auto it_off = args.find("offset");
+            if (it_off != args.end()) try { offset = std::stoi(it_off->second); } catch(...) {}
+            auto it_lim = args.find("limit");
+            if (it_lim != args.end()) try { limit = std::stoi(it_lim->second); } catch(...) {}
+            if (offset < 0) offset = 0;
+            if (limit < 0) limit = 0;
 
-            // Limita la dimensione
-            const size_t MAX_CONTENT = 65536;
-            if (content.size() > MAX_CONTENT) {
-                content.resize(MAX_CONTENT);
-                content += "\n... [file troncato a " + std::to_string(MAX_CONTENT) + " bytes]";
+            // Leggi tutte le righe
+            std::vector<std::string> lines;
+            std::string line;
+            while (std::getline(file, line)) lines.push_back(line);
+
+            if (offset >= (int)lines.size()) {
+                return {false, "", "Offset " + std::to_string(offset) +
+                        " oltre la fine del file (" + std::to_string(lines.size()) + " righe)"};
             }
 
-            return {true, content, "", false, {{"file_size", std::to_string(content.size())}}};
+            // Costruisci output con numeri di riga
+            int end = limit > 0 ? std::min(offset + limit, (int)lines.size()) : (int)lines.size();
+            std::string output;
+            for (int i = offset; i < end; i++) {
+                int lineno = i + 1; // 1-indexed per i numeri di riga
+                char prefix[32];
+                snprintf(prefix, sizeof(prefix), "%5d: ", lineno);
+                output += prefix + lines[i] + "\n";
+            }
+
+            if ((int)output.size() > 65536) {
+                output.resize(65536 - 40);
+                output += "\n... [output troncato]";
+            }
+
+            std::string details = "file_size=" + std::to_string(output.size());
+            if (offset > 0 || end < (int)lines.size()) {
+                details += " range=" + std::to_string(offset) + "-" + std::to_string(end - 1);
+            }
+            details += " total_lines=" + std::to_string(lines.size());
+
+            return {true, output, "", false, {{"file_size", std::to_string(output.size())},
+                     {"range", std::to_string(offset) + "-" + std::to_string(end - 1)},
+                     {"total_lines", std::to_string(lines.size())}}};
         }
     });
 
@@ -586,19 +622,16 @@ ToolRegistry::ToolRegistry()
         "diff_apply",
         "STRUMENTO PRINCIPALE DI EDITING. Applica una unified diff a un file.\n"
         "USA QUESTO per modificare file esistenti, NON 'write'.\n"
-        "Il formato richiesto:\n"
-        "```diff\n"
+        "PRIMA di generare una diff, DEVI leggere il file con 'read'.\n"
+        "Il diff viene applicato sul file REALE, non sulla tua memoria.\n"
+        "Se il contesto non matcha, leggi DI NUOVO il file.\n"
+        "Formato:\n"
         "@@ -L,C +L,C @@\n"
-        " riga di contesto (deve matchare ESATTAMENTE nel file)\n"
+        " riga di contesto (COPIATA ESATTAMENTE dal file)\n"
         "-riga da rimuovere\n"
         "+riga da aggiungere\n"
         " riga di contesto\n"
-        "```\n"
-        "REGOLE:\n"
-        "- Includi 2-3 righe di contesto prima e dopo la modifica\n"
-        "- Le righe di contesto devono essere COPIATE ESATTAMENTE dal file\n"
-        "- Supporta hunk multipli per modifiche in punti diversi del file\n"
-        "- Il diff fallisce se il contesto non matcha — questo PREVIENE modifiche errate",
+        "Includi 2-3 righe di contesto prima e dopo le modifiche.",
         {
             {"path", "string", "Percorso del file da modificare", true},
             {"diff", "string", "Unified diff da applicare", true}
@@ -609,7 +642,7 @@ ToolRegistry::ToolRegistry()
             if (it_path == args.end()) return {false, "", "Parametro 'path' mancante"};
             if (it_diff == args.end()) return {false, "", "Parametro 'diff' mancante"};
 
-            // Leggi file
+            // Leggi file REALE (non fidarti del contesto del modello)
             std::ifstream in(it_path->second);
             if (!in.is_open())
                 return {false, "", "Impossibile leggere: " + it_path->second};
@@ -619,8 +652,20 @@ ToolRegistry::ToolRegistry()
 
             // Applica patch
             PatchResult pr = apply_unified_diff(content, it_diff->second);
-            if (!pr.ok)
-                return {false, "", pr.error};
+            if (!pr.ok) {
+                // Mostra il contesto REALE attorno al punto di fallimento
+                // così il modello può rigenerare la diff corretta
+                std::string err = "FAIL: " + pr.error + "\n";
+                err += "SUGGERIMENTO: il diff non matcha il file REALE.\n";
+                err += "1. Leggi il file con 'read' per vedere il contenuto ATTUALE\n";
+                err += "2. Rigenera la diff copiando ESATTAMENTE le righe dal file\n";
+                err += "3. Non basarti sulla tua memoria del file\n";
+                if (!pr.context_snippet.empty()) {
+                    err += "\nContenuto REALE del file attorno al punto modificato:\n";
+                    err += pr.context_snippet;
+                }
+                return {false, "", err};
+            }
 
             // Crea directory padre
             std::string path_str = it_path->second;
@@ -639,7 +684,7 @@ ToolRegistry::ToolRegistry()
             out << pr.modified;
             out.close();
 
-            return {true, "Patch applicata a " + path_str + " (" +
+            return {true, "Patch applicata: " + path_str + " (" +
                     std::to_string(content.size()) + " -> " +
                     std::to_string(pr.modified.size()) + " byte)", ""};
         }

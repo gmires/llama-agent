@@ -120,6 +120,17 @@ PatchResult apply_unified_diff(const std::string & content, const std::string & 
     for (int hi = (int)hunks.size() - 1; hi >= 0; hi--) {
         const Hunk & h = hunks[hi];
 
+        // Helper: estrai contesto REALE attorno a una riga per il messaggio di errore
+        auto build_context = [&](int around_line, int radius) -> std::string {
+            std::string ctx;
+            int start = std::max(0, around_line - radius);
+            int end = std::min((int)lines.size(), around_line + radius + 1);
+            for (int i = start; i < end; i++) {
+                ctx += "  " + std::to_string(i + 1) + ": " + lines[i] + "\n";
+            }
+            return ctx;
+        };
+
         // Converti old_start da 1-indexed a 0-indexed
         int idx = h.old_start - 1;
         if (idx < 0) {
@@ -127,11 +138,12 @@ PatchResult apply_unified_diff(const std::string & content, const std::string & 
                     " old_start non valido: " + std::to_string(h.old_start)};
         }
         if (idx + h.old_count > (int)lines.size()) {
-            char buf[128];
+            char buf[256];
             snprintf(buf, sizeof(buf),
-                     "Hunk #%d fallito: le righe %d-%d eccedono la fine del file (%zu righe)",
+                     "Hunk #%d fallito: righe %d-%d oltre la fine del file (%zu righe totali)",
                      hi + 1, h.old_start, h.old_start + h.old_count - 1, lines.size());
-            return {false, "", buf};
+            std::string ctx = "Ultime righe del file REALE:\n" + build_context(lines.size() - 1, 5);
+            return {false, "", buf, ctx};
         }
 
         // Verifica contesto: ogni riga ' ' o '-' deve matchare
@@ -139,24 +151,30 @@ PatchResult apply_unified_diff(const std::string & content, const std::string & 
         for (const auto & [ch, text] : h.lines) {
             if (ch == ' ') {
                 if (old_idx >= (int)lines.size() || lines[old_idx] != text) {
-                    char buf[256];
+                    char buf[384];
                     snprintf(buf, sizeof(buf),
-                             "Hunk #%d fallito: contesto non matcha alla riga %d.\n"
-                             "  Atteso:  %s\n  Trovato: %s",
+                             "Hunk #%d fallito a riga %d: contesto non matcha.\n"
+                             "  Atteso:  %s\n"
+                             "  Trovato: %s",
                              hi + 1, old_idx + 1, text.c_str(),
                              old_idx < (int)lines.size() ? lines[old_idx].c_str() : "(EOF)");
-                    return {false, "", buf};
+                    std::string ctx = "File REALE attorno a riga " + std::to_string(old_idx + 1) + ":\n"
+                                    + build_context(old_idx, 3);
+                    return {false, "", buf, ctx};
                 }
                 old_idx++;
             } else if (ch == '-') {
                 if (old_idx >= (int)lines.size() || lines[old_idx] != text) {
-                    char buf[256];
+                    char buf[384];
                     snprintf(buf, sizeof(buf),
-                             "Hunk #%d fallito: riga da rimuovere non matcha alla riga %d.\n"
-                             "  Atteso: -%s\n  Trovato: %s",
+                             "Hunk #%d fallito a riga %d: riga da rimuovere non trovata.\n"
+                             "  Atteso: -%s\n"
+                             "  Trovato: %s",
                              hi + 1, old_idx + 1, text.c_str(),
                              old_idx < (int)lines.size() ? lines[old_idx].c_str() : "(EOF)");
-                    return {false, "", buf};
+                    std::string ctx = "File REALE attorno a riga " + std::to_string(old_idx + 1) + ":\n"
+                                    + build_context(old_idx, 3);
+                    return {false, "", buf, ctx};
                 }
                 old_idx++;
             }
