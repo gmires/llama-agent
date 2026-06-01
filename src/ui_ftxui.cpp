@@ -161,10 +161,14 @@ struct FTXUI::Impl {
                 }
             }
             if (!block_buf.empty()) {
-                if (in_code)
+                if (in_code) {
                     blocks.push_back(paragraph(" " + block_buf) | color(Color::CyanLight) | bgcolor(Color::Grey19));
-                else
+                    blocks.push_back(text(" \u2514\u2500 [code block non chiuso]") | dim | color(Color::GrayDark));
+                } else {
                     blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                }
+            } else if (in_code) {
+                blocks.push_back(text(" \u250C\u2500 [code block vuoto]") | dim | color(Color::GrayDark));
             }
             return vbox(blocks);
         }
@@ -330,10 +334,14 @@ struct FTXUI::Impl {
                     }
                 }
                 if (!block_buf.empty()) {
-                    if (in_code)
+                    if (in_code) {
                         resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::CyanLight) | bgcolor(Color::Grey19));
-                    else
+                        resp_blocks.push_back(text(" \u2514\u2500 [code block non chiuso]") | dim | color(Color::GrayDark));
+                    } else {
                         resp_blocks.push_back(paragraph(" " + block_buf) | color(Color::White));
+                    }
+                } else if (in_code) {
+                    resp_blocks.push_back(text(" \u250C\u2500 [code block vuoto]") | dim | color(Color::GrayDark));
                 }
                 content_elems.push_back(vbox(resp_blocks));
                 content_elems.push_back(text(""));

@@ -1,5 +1,6 @@
 #include "../src/tools.h"
 #include "../src/permissions.h"
+#include "../src/patches.h"
 
 #include <iostream>
 #include <cassert>
@@ -502,6 +503,74 @@ static void test_task_tools()
     std::cout << "  OK\n";
 }
 
+static void test_diff_apply()
+{
+    std::cout << "[Tool: diff_apply]\n";
+
+    ToolRegistry reg;
+    std::string f = "/tmp/test_agent_diff.txt";
+
+    // Test 1: apply semplice
+    {
+        std::ofstream of(f); of << "line1\nline2\nline3\n"; of.close();
+        std::string diff =
+            "@@ -1,3 +1,4 @@\n"
+            " line1\n"
+            "-line2\n"
+            "+new line2\n"
+            "+extra line\n"
+            " line3\n";
+        auto res = reg.execute("diff_apply", {{"path", f}, {"diff", diff}});
+        CHECK(res.success, "diff_apply simple");
+        std::ifstream in(f);
+        std::string c((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(c == "line1\nnew line2\nextra line\nline3\n", "diff_apply result correct");
+    }
+
+    // Test 2: hunk non matcha (contesto sbagliato)
+    {
+        std::ofstream of(f); of << "line1\nline2\nline3\n"; of.close();
+        std::string diff =
+            "@@ -1,3 +1,3 @@\n"
+            " line1\n"
+            "-line2\n"
+            "+new line2\n"
+            " WRONG_CONTEXT\n";  // non matcha line3
+        auto res = reg.execute("diff_apply", {{"path", f}, {"diff", diff}});
+        CHECK(!res.success, "diff_apply fails on bad context");
+        CHECK(res.error.find("contesto") != std::string::npos || res.error.find("Hunk") != std::string::npos,
+              "diff_apply error mentions context/hunk");
+    }
+
+    // Test 3: diff vuoto
+    {
+        auto res = reg.execute("diff_apply", {{"path", f}, {"diff", ""}});
+        CHECK(!res.success, "diff_apply fails on empty diff");
+    }
+
+    // Test 4: hunk multipli
+    {
+        std::ofstream of(f); of << "a\nb\nc\nd\ne\n"; of.close();
+        std::string diff =
+            "@@ -2,2 +2,2 @@\n"
+            " b\n"
+            "-c\n"
+            "+C\n"
+            "@@ -4,2 +4,2 @@\n"
+            " d\n"
+            "-e\n"
+            "+E\n";
+        auto res = reg.execute("diff_apply", {{"path", f}, {"diff", diff}});
+        CHECK(res.success, "diff_apply multi-hunk");
+        std::ifstream in(f);
+        std::string c((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(c == "a\nb\nC\nd\nE\n", "diff_apply multi-hunk correct");
+    }
+
+    fs::remove(f);
+    std::cout << "  OK\n";
+}
+
 static void test_permissions()
 {
     std::cout << "[PermissionManager]\n";
@@ -545,6 +614,7 @@ int main()
     test_hooks();
     test_git_tools();
     test_task_tools();
+    test_diff_apply();
     test_permissions();
 
     std::cout << "\n=== " << passed << "/" << tests << " passed ===\n";

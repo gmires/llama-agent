@@ -1,4 +1,5 @@
 #include "tools.h"
+#include "patches.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -184,9 +185,10 @@ ToolRegistry::ToolRegistry()
     // --- Tool: write ---
     register_tool({
         "write",
-        "Scrive contenuto in un file. Crea automaticamente le directory padre. "
-        "IMPORTANTE: le virgolette nel contenuto vanno escapate con \\\". "
-        "ATTENZIONE: sovrascrive il file esistente.",
+        "Scrive/CREA un NUOVO file. Crea automaticamente le directory padre.\n"
+        "IMPORTANTE: PER MODIFICARE file esistenti, USA 'diff_apply', NON 'write'.\n"
+        "Le virgolette nel contenuto vanno escapate con \\\".\n"
+        "ATTENZIONE: sovrascrive completamente il file esistente.",
         {
             {"path", "string", "Percorso del file da scrivere", true},
             {"content", "string", "Contenuto da scrivere nel file", true}
@@ -548,9 +550,9 @@ ToolRegistry::ToolRegistry()
     // --- Tool: edit ---
     register_tool({
         "edit",
-        "Sostituisce una stringa in un file. La vecchia stringa deve apparire "
-        "ESATTAMENTE UNA VOLTA nel file. Usa per modifiche mirate senza "
-        "riscrivere tutto il file.",
+        "Sostituisce una stringa in un file (match unico). Alternativa semplice a diff_apply.\n"
+        "Per modifiche complesse o multi-riga, preferisci 'diff_apply'.\n"
+        "La vecchia stringa deve apparire ESATTAMENTE UNA VOLTA nel file.",
         {
             {"path",       "string", "File da modificare", true},
             {"old_string", "string", "Testo da sostituire (deve essere unico)", true},
@@ -576,6 +578,70 @@ ToolRegistry::ToolRegistry()
             out<<c; out.close();
             return {true,"Modificato: "+it_p->second+" ("+
                      std::to_string(o.size())+"->"+std::to_string(n.size())+" byte)",""};
+        }
+    });
+
+    // --- Tool: diff_apply ---
+    register_tool({
+        "diff_apply",
+        "STRUMENTO PRINCIPALE DI EDITING. Applica una unified diff a un file.\n"
+        "USA QUESTO per modificare file esistenti, NON 'write'.\n"
+        "Il formato richiesto:\n"
+        "```diff\n"
+        "@@ -L,C +L,C @@\n"
+        " riga di contesto (deve matchare ESATTAMENTE nel file)\n"
+        "-riga da rimuovere\n"
+        "+riga da aggiungere\n"
+        " riga di contesto\n"
+        "```\n"
+        "REGOLE:\n"
+        "- Includi 2-3 righe di contesto prima e dopo la modifica\n"
+        "- Le righe di contesto devono essere COPIATE ESATTAMENTE dal file\n"
+        "- Supporta hunk multipli per modifiche in punti diversi del file\n"
+        "- Il diff fallisce se il contesto non matcha — questo PREVIENE modifiche errate",
+        {
+            {"path", "string", "Percorso del file da modificare", true},
+            {"diff", "string", "Unified diff da applicare", true}
+        },
+        [](const std::map<std::string, std::string> & args) -> ToolResult {
+            const auto it_path = args.find("path");
+            const auto it_diff = args.find("diff");
+            if (it_path == args.end()) return {false, "", "Parametro 'path' mancante"};
+            if (it_diff == args.end()) return {false, "", "Parametro 'diff' mancante"};
+
+            // Leggi file
+            std::ifstream in(it_path->second);
+            if (!in.is_open())
+                return {false, "", "Impossibile leggere: " + it_path->second};
+            std::string content((std::istreambuf_iterator<char>(in)),
+                                 std::istreambuf_iterator<char>());
+            in.close();
+
+            // Applica patch
+            PatchResult pr = apply_unified_diff(content, it_diff->second);
+            if (!pr.ok)
+                return {false, "", pr.error};
+
+            // Crea directory padre
+            std::string path_str = it_path->second;
+            fs::path parent = fs::path(path_str).parent_path();
+            if (!parent.empty() && !fs::exists(parent)) {
+                std::error_code ec;
+                fs::create_directories(parent, ec);
+                if (ec)
+                    return {false, "", "Impossibile creare directory: " + parent.string()};
+            }
+
+            // Scrivi
+            std::ofstream out(path_str);
+            if (!out.is_open())
+                return {false, "", "Impossibile scrivere: " + path_str};
+            out << pr.modified;
+            out.close();
+
+            return {true, "Patch applicata a " + path_str + " (" +
+                    std::to_string(content.size()) + " -> " +
+                    std::to_string(pr.modified.size()) + " byte)", ""};
         }
     });
 

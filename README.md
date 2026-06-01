@@ -127,7 +127,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 - **`"` nelle stringhe**: virgolette escape-aware nei contenuti non troncano il valore
 - **Pattern `chiave: valore`**: scan lineare fuori dalle stringhe — falsi key-value nel contenuto non generano falsi match
 
-### Tool disponibili (20)
+### Tool disponibili (21)
 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
@@ -135,6 +135,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 | `read` | Legge file di testo (max 64KB) | `path` |
 | `write` | Scrive/crea file di testo | `path`, `content` |
 | `edit` | Sostituisce stringa in file (match unico) | `path`, `old_string`, `new_string` |
+| `diff_apply` | Applica unified diff con verifica contesto | `path`, `diff` |
 | `grep` | Cerca pattern regex nei file (ricorsivo) | `pattern`, `path` |
 | `glob` | Trova file per pattern glob con brace expansion | `pattern` |
 | `find` | Ricerca file nativa C++ (fnmatch + brace expansion) | `path`, `pattern`, `type`, `max_depth` |
@@ -314,7 +315,8 @@ src/
 ├── main.cpp           — Entry point, CLI parsing, filter_agent_args
 ├── agent.h / .cpp     — Agent core: init, eval_prompt, generate, handle_tool_call
 ├── kvcache.h / .cpp   — Persistenza KVCache: token/state save/load, CacheMode
-├── tools.h / .cpp     — Tool calling: 19 tools, JSON parsing, ToolRegistry, hooks
+├── tools.h / .cpp     — Tool calling: 21 tools, JSON parsing, ToolRegistry, hooks
+├── patches.h / .cpp   — Unified diff parser + apply engine
 
 toolstest/
 ├── test_tools.cpp     — 104 test (parser, tool exec, hooks, git, task, permissions)
@@ -329,7 +331,7 @@ toolstest/
 cd toolstest/build && ./test_tools
 ```
 
-**104 test**: 37 parser JSON, 12 tool execution, 7 hook, 7 git/task, permissions. Verificano: parsing robusto (stringhe con `{}`, escape, falsi key-value), esecuzione tool file-system, git, task CRUD, hook chain, gestione permessi.
+**115 test**: 37 parser JSON, 12 tool execution, 7 hook, 7 git/task, 4 diff_apply, permissions. Verificano: parsing robusto (stringhe con `{}`, escape, falsi key-value), esecuzione tool file-system, git, task CRUD, hook chain, gestione permessi.
 
 ---
 

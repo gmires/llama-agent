@@ -35,7 +35,7 @@
 - [x] Comandi slash: /help, /clear, /regen, /compact, /model, /session, /stats, /exit
 - [x] Supporto --single-turn con -p
 
-### Tool Calling (19 tools)
+### Tool Calling (21 tools)
 - [x] `bash` — comandi shell con timeout configurabile, cattura stderr
 - [x] `read` — lettura file
 - [x] `write` — scrittura file
@@ -47,6 +47,7 @@
 - [x] `rm` — elimina file (protetto da permessi)
 - [x] `mv` — sposta/rinomina file/directory
 - [x] `edit` — sostituisce stringa in file (match unico, più sicuro di write)
+- [x] `diff_apply` — applica unified diff con verifica contesto per hunk
 - [x] `web_search` — cerca su DuckDuckGo (POST, titolo/URL/snippet)
 - [x] `git_diff`, `git_log`, `git_status`, `git_branch` — integrazione git
 - [x] `task_create`, `task_list`, `task_update` — task management (`.cache/tasks.json`)
