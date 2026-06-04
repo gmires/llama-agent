@@ -496,6 +496,11 @@ void Agent::process_prompt_sync(const std::string & prompt)
     int n_batch = params_.n_batch;
     auto eval_start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < (int)tokens.size(); i += n_batch) {
+        if (interrupted_) {
+            fprintf(stderr, "[Agent] Prefill interrotto dall'utente\n");
+            if (ui_) ui_->show_info("Prefill interrotto.");
+            return;
+        }
         int n_eval = std::min((int)tokens.size() - i, n_batch);
         common_batch_clear(batch_);
         for (int j = 0; j < n_eval; j++) {
@@ -1087,6 +1092,7 @@ void Agent::handle_tool_call(const std::string & name,
     // Inietta il risultato nel contesto
     std::vector<llama_token> ft = common_tokenize(ctx_, feedback, true);
     for (size_t i = 0; i < ft.size(); i++) {
+        if (interrupted_) break;
         common_batch_clear(batch_);
         common_batch_add(batch_, ft[i], n_past_, {0}, i == ft.size() - 1);
         n_past_++;
