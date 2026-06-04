@@ -13,6 +13,7 @@
 
 ### KVCache Persistente
 - [x] Fast mode: `llama_state_save_file` / `llama_state_load_file` — ripristino in ms
+- [x] KV Cache quantizzata Q8_0 di default (--cache-type-k/v per override)
 - [x] Token mode: token-file con ricostruzione KVCache + barra di progresso
 - [x] Fallback automatico: stato binario corrotto -> ricostruzione da token
 - [x] Checkpoint prompt-only per /regen
@@ -22,7 +23,7 @@
 ### UI
 - [x] FTXUI TUI con messaggi strutturati (6 tipi: USER/ASSISTANT/THINKING/TOOL_CALL/TOOL_RESULT/SYSTEM)
 - [x] Tool call a blocchi: `▸ Tool: name(args)` blu bold, `│ risultato` blu dim
-- [x] Thinking collassabile con toggle `Ctrl+T` (▼/▶)
+- [x] Thinking collassabile con toggle `Ctrl+T`/`F2` (▼/▶)
 - [x] Scroll PgUp/PgDn/Home/End con `focusPositionRelative`
 - [x] Code block inline (` ``` `) con sfondo grigio e testo cyan
 - [x] Colori per ruolo: utente verde `❯`, assistant bianco, heading giallo, sistema grigio

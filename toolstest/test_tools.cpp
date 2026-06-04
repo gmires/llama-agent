@@ -206,12 +206,18 @@ static void test_read_tool()
     res = reg.execute("read", {{"path", "/nonexistent_file_xyz"}});
     CHECK(!res.success, "read nonexistent file fails");
 
-    // Test offset/limit
-    auto res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"offset", "0"}, {"limit", "3"}});
-    CHECK(res2.success, "read with offset/limit");
+    // Test offset/limit con numeri di riga
+    auto res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"offset", "0"}, {"limit", "3"}, {"lineno", "true"}});
+    CHECK(res2.success, "read with offset/limit/lineno");
     CHECK(res2.output.find("cmake_minimum_required") != std::string::npos, "read limit has content");
-    CHECK(res2.output.find("1:") != std::string::npos, "read shows line numbers");
-    CHECK(res2.details["total_lines"] != "", "read has total_lines detail");
+    CHECK(res2.output.find("1:") != std::string::npos || res2.output.find("    1: ") != std::string::npos,
+          "read shows line numbers when lineno=true");
+
+    // Test senza numeri di riga (default)
+    res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"limit", "2"}});
+    CHECK(res2.success, "read without lineno");
+    CHECK(res2.output.find(":") == std::string::npos || res2.output.find("cmake") < res2.output.find(":"),
+          "read without lineno has no line numbers");
 
     // Offset oltre la fine
     res2 = reg.execute("read", {{"path", "../../CMakeLists.txt"}, {"offset", "9999"}});

@@ -77,6 +77,16 @@ GGML_BLAS_VENDOR=MKL
 Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/examples/main/README.md) sono supportati:
 `--temp`, `--top-k`, `--top-p`, `--seed`, `-c` (ctx-size), `--threads`, `-ngl` (GPU layers), ecc.
 
+### Ottimizzazioni
+
+| Flag | Default | Descrizione |
+|------|---------|-------------|
+| `--cache-type-k` | `q8_0` | Tipo KVCache chiavi K (default ottimale, override con `f16` per precisione) |
+| `--cache-type-v` | `q8_0` | Tipo KVCache valori V (default ottimale) |
+| `--yarn-ext-factor` | `-1.0` | YaRN extrapolation: valori >1 abilitano contesto esteso oltre il training (es. `2.0` per 2x contesto) |
+| `--rope-freq-base` | `0.0` | RoPE base frequency. 1000000 per contesti >32K token. |
+| `--rope-freq-scale` | `0.0` | RoPE frequency scaling lineare |
+
 ### Comandi nella UI
 
 | Comando | Azione |
@@ -95,7 +105,7 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 | Tasto | Azione |
 |-------|--------|
 | `Enter` | Invia messaggio |
-| `Ctrl+Enter` / `Ctrl+J` | Nuova riga nell'input |
+| `Ctrl+J` | Nuova riga nell'input (Ctrl+Enter non funziona su tutti i terminali) |
 | `←` / `→` | Muovi cursore nell'input |
 | `Ctrl+A` / `Ctrl+E` | Inizio/fine riga |
 | `Ctrl+W` | Cancella parola |
@@ -104,7 +114,7 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 | `PgUp` / `PgDn` | Scroll cronologia (o rotella mouse) |
 | `Home` / `End` | Inizio/fine input (se testo) o scroll estremi |
 | `Su` / `Giù` | Cronologia prompt precedenti |
-| `Ctrl+T` | Comprimi/espandi blocchi Thinking |
+| `Ctrl+T` / `F2` | Comprimi/espandi blocchi Thinking |
 | `Esc` | Interrompe la generazione in corso |
 
 ---
@@ -132,7 +142,7 @@ Il parser è progettato per gestire contenuti complessi (HTML, CSS, JavaScript) 
 | Tool | Descrizione | Parametri |
 |------|-------------|-----------|
 | `bash` | Esegue comandi shell (2>&1) con timeout configurabile | `command`, `timeout` |
-| `read` | Legge file con numeri di riga (offset/limit opzionali) | `path`, `offset`, `limit` |
+| `read` | Legge file (offset/limit/lineno opzionali) | `path`, `offset`, `limit`, `lineno` |
 | `write` | Scrive/crea file di testo | `path`, `content` |
 | `edit` | Sostituisce stringa in file (match unico) | `path`, `old_string`, `new_string` |
 | `diff_apply` | Applica unified diff con verifica contesto | `path`, `diff` |

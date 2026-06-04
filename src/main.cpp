@@ -158,15 +158,28 @@ int main(int argc, char ** argv)
 
     // Poi: parsing standard dei parametri llama-cli con l'argv filtrato
     if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_CLI)) {
-        // common_params_parse mostrerÃ  l'aiuto in caso di errore
         return 1;
     }
 
-    // Se richiesto --help o --usage, common_params_parse ha giÃ  stampato
-    // l'aiuto e restituito false. Usciamo.
-    if (params.usage) {
-        return 0;
+    // --- Default ottimizzati per llama-agent ---
+    // KV Cache quantizzata Q8_0: dimezza RAM e spazio disco.
+    // Solo se l'utente non ha già impostato il flag esplicitamente.
+    {
+        bool user_set_k = false, user_set_v = false;
+        for (int i = 1; i < argc; i++) {
+            std::string a(argv[i]);
+            if (a == "--cache-type-k" || a == "-ctk") user_set_k = true;
+            if (a == "--cache-type-v" || a == "-ctv") user_set_v = true;
+        }
+        if (!user_set_k) params.cache_type_k = GGML_TYPE_Q8_0;
+        if (!user_set_v) params.cache_type_v = GGML_TYPE_Q8_0;
+        fprintf(stderr, "[Config] KV Cache: K=%s V=%s%s\n",
+                ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v),
+                (!user_set_k || !user_set_v) ? " (default Q8_0)" : "");
     }
+
+    // Se richiesto --help o --usage, common_params_parse ha già stampato
+    if (params.usage) return 0;
 
     // --- Carica configurazione da file JSON ---
     // Ordine: ~/.config/llama-agent/config.json (globale) poi .llama-agent.json (progetto)

@@ -73,11 +73,11 @@ struct FTXUI::Impl {
     std::string footer_text;
     std::string input_text;
     int input_cursor = 0;           // posizione cursore nell'input
-    std::string input_placeholder = "Scrivi (Ctrl+Enter = a capo, Enter = invia)...";
+    std::string input_placeholder = "Scrivi (Ctrl+J = a capo, Enter = invia)...";
 
     // Scroll: 1.0 = fondo, 0.0 = inizio
     float scroll_y = 1.0f;
-    bool  thinking_collapsed = false;  // T per collassare/espandere thinking
+    bool  thinking_collapsed = false;  // Ctrl+T per collassare/espandere thinking
 
     // Cronologia prompt
     std::vector<std::string> prompt_history;
@@ -176,9 +176,9 @@ struct FTXUI::Impl {
         case MsgType::THINKING: {
             Elements blocks;
             if (thinking_collapsed) {
-                blocks.push_back(text(" \u25B6 Thinking  [Ctrl+T per espandere]") | dim | color(Color::Yellow));
+                blocks.push_back(text(" \u25B6 Thinking  [Ctrl+T/F2 per espandere]") | dim | color(Color::Yellow));
             } else {
-                blocks.push_back(text(" \u25BC Thinking  [Ctrl+T per comprimere]") | dim | color(Color::Yellow));
+                blocks.push_back(text(" \u25BC Thinking  [Ctrl+T/F2 per comprimere]") | dim | color(Color::Yellow));
                 blocks.push_back(paragraph("   " + msg.text) | color(Color::YellowLight) | dim);
             }
             return vbox(blocks);
@@ -287,10 +287,10 @@ struct FTXUI::Impl {
             if (!thinking_text.empty()) {
                 if (thinking_collapsed) {
                     content_elems.push_back(
-                        text(" \u25B6 Thinking...  [Ctrl+T]") | dim | color(Color::Yellow));
+                        text(" \u25B6 Thinking...  [Ctrl+T/F2]") | dim | color(Color::Yellow));
                 } else {
                     content_elems.push_back(
-                        text(" \u25BC Thinking  [Ctrl+T]") | dim | color(Color::Yellow));
+                        text(" \u25BC Thinking  [Ctrl+T/F2]") | dim | color(Color::Yellow));
                     content_elems.push_back(
                         paragraph("   " + thinking_text) | color(Color::YellowLight) | dim);
                 }
@@ -423,7 +423,7 @@ struct FTXUI::Impl {
                 text(spinner_str) | color(Color::Green) | bold,
                 text(" ") | size(WIDTH, EQUAL, 1),
                 text(footer_text) | color(Color::GrayLight) | flex,
-                text("\u2190\u2192 cursore  Tab=completa  Esc=stop  Ctrl+T=think  PgUp/Dn=scroll") | dim | color(Color::GrayDark),
+                text("\u2190\u2192 cursore  Tab=completa  Esc=stop  PgUp/Dn=scroll") | dim | color(Color::GrayDark),
             }) | bgcolor(Color::Grey15);
 
             // --- Content area con scroll solo verticale ---
@@ -487,8 +487,8 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // Ctrl+T: toggle thinking collapse
-            if (event == Event::CtrlT && !generating) {
+            // Ctrl+T o F2: toggle thinking collapse
+            if ((event == Event::CtrlT || event == Event::F2) && !generating) {
                 thinking_collapsed = !thinking_collapsed;
                 return true;
             }
@@ -587,49 +587,50 @@ struct FTXUI::Impl {
                 return true;
             }
 
+            // Tab: autocompletamento percorso file
+            if ((event == Event::Tab || event == Event::TabReverse) && !generating) {
+                std::lock_guard<std::mutex> tl(text_mutex);
+                if (!input_text.empty() && input_cursor > 0) {
+                    int start = input_cursor - 1;
+                    while (start >= 0 && input_text[start] != ' ' && input_text[start] != '\n')
+                        start--;
+                    start++;
+                    std::string partial = input_text.substr(start, input_cursor - start);
+                    std::string completed = partial;
+                    try {
+                        std::string dir = ".";
+                        std::string prefix = partial;
+                        size_t slash = partial.find_last_of('/');
+                        if (slash != std::string::npos) {
+                            dir = partial.substr(0, slash);
+                            if (dir.empty()) dir = "/";
+                            prefix = partial.substr(slash + 1);
+                        }
+                        if (fs::exists(dir) && fs::is_directory(dir)) {
+                            for (const auto & e : fs::directory_iterator(dir,
+                                     fs::directory_options::skip_permission_denied)) {
+                                std::string name = e.path().filename().string();
+                                if (prefix.empty() || name.substr(0, prefix.size()) == prefix) {
+                                    completed = partial.substr(0, partial.size() - prefix.size()) + name;
+                                    if (e.is_directory()) completed += "/";
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (...) {}
+                    if (completed != partial) {
+                        input_text.replace(start, input_cursor - start, completed);
+                        input_cursor = start + (int)completed.size();
+                    }
+                }
+                return true;
+            }
+
             // Caratteri stampabili: inserisci al cursore
             if (event.is_character() && event.character() != "\n" && event.character() != "\r") {
                 std::lock_guard<std::mutex> tl(text_mutex);
-                std::string ch = event.character();
-                if (ch == "\t") {
-                    // Tab: autocompletamento percorso file
-                    if (!input_text.empty() && input_cursor > 0) {
-                        int start = input_cursor - 1;
-                        while (start >= 0 && input_text[start] != ' ' && input_text[start] != '\n')
-                            start--;
-                        start++;
-                        std::string partial = input_text.substr(start, input_cursor - start);
-                        std::string completed = partial;
-                        try {
-                            std::string dir = ".";
-                            std::string prefix = partial;
-                            size_t slash = partial.find_last_of('/');
-                            if (slash != std::string::npos) {
-                                dir = partial.substr(0, slash);
-                                if (dir.empty()) dir = "/";
-                                prefix = partial.substr(slash + 1);
-                            }
-                            if (fs::exists(dir) && fs::is_directory(dir)) {
-                                for (const auto & e : fs::directory_iterator(dir,
-                                         fs::directory_options::skip_permission_denied)) {
-                                    std::string name = e.path().filename().string();
-                                    if (prefix.empty() || name.substr(0, prefix.size()) == prefix) {
-                                        completed = partial.substr(0, partial.size() - prefix.size()) + name;
-                                        if (e.is_directory()) completed += "/";
-                                        break;
-                                    }
-                                }
-                            }
-                        } catch (...) {}
-                        if (completed != partial) {
-                            input_text.replace(start, input_cursor - start, completed);
-                            input_cursor = start + (int)completed.size();
-                        }
-                    }
-                    return true;
-                }
-                input_text.insert(input_cursor, ch);
-                input_cursor += (int)ch.size();
+                input_text.insert(input_cursor, event.character());
+                input_cursor += (int)event.character().size();
                 return true;
             }
 

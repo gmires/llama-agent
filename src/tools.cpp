@@ -151,54 +151,51 @@ ToolRegistry::ToolRegistry()
     // --- Tool: read ---
     register_tool({
         "read",
-        "Legge il contenuto di un file di testo. Supporta offset e limit per "
-        "leggere porzioni specifiche. Mostra i numeri di riga. "
-        "USA 'read' PRIMA di generare una diff per 'diff_apply'.\n"
-        "Esempi:\n"
-        "  read(path=\"file.cpp\") — tutto il file\n"
-        "  read(path=\"file.cpp\", offset=40, limit=20) — righe 41-60",
+        "Legge il contenuto di un file di testo.\n"
+        "Con offset/limit legge porzioni specifiche. Con lineno=true mostra i numeri di riga.\n"
+        "USA 'read' PRIMA di generare una diff per 'diff_apply'.",
         {
             {"path",  "string", "Percorso del file da leggere", true},
             {"offset","number", "Riga da cui iniziare (0-indexed, default: 0)", false},
-            {"limit", "number", "Numero massimo di righe (0 = tutto, default: 0)", false}
+            {"limit", "number", "Numero massimo di righe (0 = tutto, default: 0)", false},
+            {"lineno","boolean","Mostra numeri di riga (default: false)", false}
         },
         [](const std::map<std::string, std::string> & args) -> ToolResult {
             const auto it = args.find("path");
-            if (it == args.end()) {
-                return {false, "", "Parametro 'path' mancante"};
-            }
+            if (it == args.end()) return {false, "", "Parametro 'path' mancante"};
 
             std::ifstream file(it->second);
-            if (!file.is_open()) {
+            if (!file.is_open())
                 return {false, "", "Impossibile aprire il file: " + it->second};
-            }
 
             int offset = 0, limit = 0;
+            bool show_lineno = false;
             auto it_off = args.find("offset");
             if (it_off != args.end()) try { offset = std::stoi(it_off->second); } catch(...) {}
             auto it_lim = args.find("limit");
             if (it_lim != args.end()) try { limit = std::stoi(it_lim->second); } catch(...) {}
+            auto it_ln = args.find("lineno");
+            if (it_ln != args.end()) show_lineno = (it_ln->second == "true" || it_ln->second == "1");
             if (offset < 0) offset = 0;
             if (limit < 0) limit = 0;
 
-            // Leggi tutte le righe
             std::vector<std::string> lines;
             std::string line;
             while (std::getline(file, line)) lines.push_back(line);
 
-            if (offset >= (int)lines.size()) {
+            if (offset >= (int)lines.size())
                 return {false, "", "Offset " + std::to_string(offset) +
                         " oltre la fine del file (" + std::to_string(lines.size()) + " righe)"};
-            }
 
-            // Costruisci output con numeri di riga
             int end = limit > 0 ? std::min(offset + limit, (int)lines.size()) : (int)lines.size();
             std::string output;
             for (int i = offset; i < end; i++) {
-                int lineno = i + 1; // 1-indexed per i numeri di riga
-                char prefix[32];
-                snprintf(prefix, sizeof(prefix), "%5d: ", lineno);
-                output += prefix + lines[i] + "\n";
+                if (show_lineno) {
+                    char prefix[32];
+                    snprintf(prefix, sizeof(prefix), "%5d: ", i + 1);
+                    output += prefix;
+                }
+                output += lines[i] + "\n";
             }
 
             if ((int)output.size() > 65536) {
@@ -206,14 +203,7 @@ ToolRegistry::ToolRegistry()
                 output += "\n... [output troncato]";
             }
 
-            std::string details = "file_size=" + std::to_string(output.size());
-            if (offset > 0 || end < (int)lines.size()) {
-                details += " range=" + std::to_string(offset) + "-" + std::to_string(end - 1);
-            }
-            details += " total_lines=" + std::to_string(lines.size());
-
             return {true, output, "", false, {{"file_size", std::to_string(output.size())},
-                     {"range", std::to_string(offset) + "-" + std::to_string(end - 1)},
                      {"total_lines", std::to_string(lines.size())}}};
         }
     });
