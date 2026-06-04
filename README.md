@@ -105,7 +105,7 @@ Tutti i flag di [llama-cli](https://github.com/ggml-org/llama.cpp/blob/master/ex
 | Tasto | Azione |
 |-------|--------|
 | `Enter` | Invia messaggio |
-| `Ctrl+J` | Nuova riga nell'input (Ctrl+Enter non funziona su tutti i terminali) |
+| `Ctrl+N` | Nuova riga nell'input (Ctrl+J come fallback) |
 | `←` / `→` | Muovi cursore nell'input |
 | `Ctrl+A` / `Ctrl+E` | Inizio/fine riga |
 | `Ctrl+W` | Cancella parola |

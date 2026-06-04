@@ -73,7 +73,7 @@ struct FTXUI::Impl {
     std::string footer_text;
     std::string input_text;
     int input_cursor = 0;           // posizione cursore nell'input
-    std::string input_placeholder = "Scrivi (Ctrl+J = a capo, Enter = invia)...";
+    std::string input_placeholder = "Scrivi (Ctrl+N = a capo, Enter = invia)...";
 
     // Scroll: 1.0 = fondo, 0.0 = inizio
     float scroll_y = 1.0f;
@@ -527,8 +527,8 @@ struct FTXUI::Impl {
                 return true;
             }
 
-            // Ctrl+J, Ctrl+M, Ctrl+Enter: inserisci newline al cursore
-            if ((event == Event::CtrlJ || event == Event::CtrlM ||
+            // Ctrl+N, Ctrl+J, Ctrl+M: inserisci newline al cursore
+            if ((event == Event::CtrlN || event == Event::CtrlJ || event == Event::CtrlM ||
                  (event.is_character() && event.character() == "\n")) && !generating) {
                 std::lock_guard<std::mutex> tl(text_mutex);
                 input_text.insert(input_cursor, "\n");
